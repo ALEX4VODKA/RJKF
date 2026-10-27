@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>停车场 3D 视图</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #E8EFF7; overflow: hidden; }
+  canvas { display: block; }
+  #hud {
+    position: fixed; left: 10px; bottom: 8px;
+    font: 10px Consolas, monospace; color: #8FA3B6; letter-spacing: 1px;
+    user-select: none; pointer-events: none;
+  }
+  #hint {
+    position: fixed; right: 10px; top: 8px; display: none;
+    font: 11px "Microsoft YaHei"; color: #7E95A9; user-select: none;
+    background: rgba(16,26,36,.72); border: 1px solid #22344A;
+    border-radius: 6px; padding: 4px 8px;
+  }
+  #loading {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: #8FA3B6; font: 12px "Microsoft YaHei"; letter-spacing: 2px;
+  }
+</style>
+</head>
+<body>
+<div id="loading">正在加载 3D 场景…</div>
+<div id="hud">3D VIEW · WEBGL · 实时渲染</div>
+<div id="hint"></div>
+<script src="lib/three.min.js"></script>
+<script src="lib/GLTFLoader.js"></script>
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="viewer.js"></script>
+</body>
+</html>

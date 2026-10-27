@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.webengine/
+
+# 成员 A 的重复交付压缩包；保留解压后的实际项目目录。
+Module A/parking_system.zip
