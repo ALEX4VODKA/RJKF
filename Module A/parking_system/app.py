@@ -8,12 +8,17 @@ import os
 import sys
 from pathlib import Path
 
+# Windows 上必须在 PyQt5 的原生 DLL 之前加载 ONNX Runtime，否则
+# HyperLPR3 首次推理可能报 DLL 初始化失败。
+import onnxruntime as _onnxruntime  # noqa: F401
+
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import QApplication
 
 from parking.config import RuntimePaths
 from parking.data import Database
+from parking.recognition import LicenseRecognizer
 from parking.services.admin_service import AuthService
 from parking.services.parking_service import ParkingService
 from parking.services.rule_service import RuleService
@@ -64,6 +69,11 @@ def main():
         rule_service=RuleService(database),
         user_session=auth_dialog.session,
         auth_service=auth_service,
+        recognizer=LicenseRecognizer(
+            runtime_paths.root,
+            threshold=float(os.environ.get("PARKING_RECOGNITION_THRESHOLD", "0.80")),
+            max_attempts=int(os.environ.get("PARKING_RECOGNITION_ATTEMPTS", "3")),
+        ),
     )
     win.setWindowIcon(_app_icon())
     win.show()
