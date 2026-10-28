@@ -19,8 +19,11 @@ A-05 出场缴费界面 / A-06 演示视频**。
 ## 1. 运行
 
 ```bash
-pip install -r requirements.txt
-python app.py
+# 在仓库根目录执行（Windows / Python 3.12）
+py -3.12 -m venv .venv
+.venv\Scripts\python.exe -m pip install -r "Module A\parking_system\requirements-dev.txt"
+cd "Module A\parking_system"
+..\..\.venv\Scripts\python.exe app.py
 ```
 
 | 项 | 说明 |
@@ -32,6 +35,10 @@ python app.py
 | 无资源 | 没有 `parking.glb`、没有视频时界面照常可跑（占位画面） |
 
 可选环境变量：`ANIM_MODE=auto|webgl|video|sequence|placeholder`（默认 `auto`）。
+SQLite 默认写入 `runtime/parking.sqlite3`，可用 `PARKING_DATA_DIR` 指向独立的
+测试或演示数据目录；`runtime/` 及数据库备份均不提交到 Git。
+首次启动会要求创建管理员账号，后续启动使用该账号登录。管理员可通过主界面
+顶栏的“收费标准”进入规则管理；修改会生成新版本，不覆盖历史停车规则快照。
 
 ---
 

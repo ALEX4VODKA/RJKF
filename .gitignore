@@ -1,8 +1,22 @@
 .venv/
+.tmp/
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .webengine/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+*.log
+
+# 本地运行数据（数据库、每日备份等）不进入版本库。
+Module A/parking_system/runtime/
 
 # 成员 A 的重复交付压缩包；保留解压后的实际项目目录。
 Module A/parking_system.zip
