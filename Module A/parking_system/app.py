@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import QApplication
 from parking.config import RuntimePaths
 from parking.data import Database
 from parking.services.admin_service import AuthService
-from parking.services.mock_service import MockService
+from parking.services.parking_service import ParkingService
 from parking.services.rule_service import RuleService
 from parking.ui import theme as T
 from parking.ui.auth_dialog import AuthDialog
@@ -58,11 +58,12 @@ def main():
         database.backup_daily(runtime_paths.backups)
 
     win = MainWindow(
-        MockService(),
+        ParkingService(database, auth_dialog.session),
         ANIM_DIR,
         os.environ.get("ANIM_MODE", "auto"),
         rule_service=RuleService(database),
         user_session=auth_dialog.session,
+        auth_service=auth_service,
     )
     win.setWindowIcon(_app_icon())
     win.show()

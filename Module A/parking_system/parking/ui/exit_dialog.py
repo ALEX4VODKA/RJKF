@@ -5,8 +5,8 @@ from datetime import datetime
 from PyQt5.QtCore import QRectF, Qt, pyqtSignal
 from PyQt5.QtGui import QColor, QFont, QIcon, QPainter, QPen
 from PyQt5.QtWidgets import (
-    QDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QPushButton, QSizePolicy,
-    QVBoxLayout, QWidget,
+    QDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QPushButton,
+    QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from . import icons
@@ -74,22 +74,25 @@ class ExitDialog(QDialog):
     """出场结算窗口。
 
     信号：
-        paid()                模拟缴费完成
-        released(reason)      reason 为空表示正常放行，非空表示授权放行原因
+        paid()                              请求模拟缴费
+        released(reason)                    请求正常/免费放行
+        authorize_requested(user,pwd,reason) 请求管理员授权放行
     """
 
     paid = pyqtSignal()
     released = pyqtSignal(str)
+    authorize_requested = pyqtSignal(str, str, str)
 
     def __init__(self, bill, parent=None):
         super().__init__(parent)
         self.bill = bill
-        self._is_paid = False
+        self._is_paid = bill.payment_status == "paid"
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setModal(True)
         self._drag_pos = None
         self._build()
+        self._sync_state()
 
     # ------------------------------------------------------------------ UI
     def _build(self):
@@ -264,6 +267,11 @@ class ExitDialog(QDialog):
         return dt.strftime("%Y-%m-%d %H:%M:%S")
 
     def _on_pay(self):
+        self.btn_pay.setEnabled(False)
+        self.btn_pay.setText("处理中…")
+        self.paid.emit()
+
+    def mark_paid(self, *, notify: bool = True):
         self._is_paid = True
         self.pill.set_kind("ok", "已缴费")
         self.amount.setStyleSheet(
@@ -274,22 +282,58 @@ class ExitDialog(QDialog):
         self.btn_release.setEnabled(True)
         self.btn_manual.setEnabled(False)
         self.tip.setText("缴费完成，可抬杆放行")
-        self.paid.emit()
-        toast(self, f"{self.bill.plate} 缴费 {self.bill.total:.2f} 元", "ok")
+        if notify:
+            toast(self, f"{self.bill.plate} 缴费 {self.bill.total:.2f} 元", "ok")
+
+    def operation_failed(self, message: str):
+        self.btn_pay.setEnabled(not self._is_paid and self.bill.total > 0)
+        self.btn_pay.setText("模拟缴费")
+        self.btn_release.setEnabled(self._is_paid or self.bill.total == 0)
+        toast(self, message, "warn")
+
+    def _sync_state(self):
+        if self.bill.entry_photo:
+            self.tile_in.set_image(self.bill.entry_photo)
+        if self.bill.exit_photo:
+            self.tile_out.set_image(self.bill.exit_photo)
+        if self.bill.release_status in {"released", "passed"}:
+            self.pill.set_kind("ok", "已放行")
+            self.btn_pay.setEnabled(False)
+            self.btn_manual.setEnabled(False)
+            self.btn_release.setEnabled(False)
+            self.tip.setText("已获得放行，可在主界面继续车辆通过流程")
+        elif self._is_paid:
+            self.mark_paid(notify=False)
+        elif self.bill.total == 0:
+            self.pill.set_kind("ok", "免费")
+            self.btn_pay.setEnabled(False)
+            self.btn_pay.setText("无需缴费")
+            self.btn_release.setEnabled(True)
+            self.btn_release.setText("免费放行")
+            self.btn_manual.setEnabled(False)
+            self.tip.setText("本次费用为 0 元，可直接放行")
 
     def _on_manual(self):
+        username, ok = QInputDialog.getText(
+            self, "管理员验证", "管理员用户名："
+        )
+        if not ok or not username.strip():
+            return
+        password, ok = QInputDialog.getText(
+            self, "管理员验证", "管理员密码：", QLineEdit.Password
+        )
+        if not ok or not password:
+            return
         reason, ok = QInputDialog.getText(
             self, "授权放行", "未缴费车辆放行原因（将写入审计日志）：",
             text="设备故障，人工核对后放行",
         )
         if not ok or not reason.strip():
             return
-        self.released.emit(reason.strip())
-        self.accept()
+        self.authorize_requested.emit(username.strip(), password, reason.strip())
 
     def _on_release(self):
         self.released.emit("")
-        self.accept()
 
     # ------------------------------------------------------------------ 拖动
     def mousePressEvent(self, ev):

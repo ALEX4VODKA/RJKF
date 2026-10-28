@@ -9,40 +9,10 @@
     bill(plate)        -> Bill
 """
 import random
-from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
-
-@dataclass
-class VehicleRow:
-    plate: str
-    kind: str            # blue / yellow / green
-    enter_time: datetime
-    status: str = "在场"
-
-    @property
-    def duration_min(self) -> int:
-        return int((datetime.now() - self.enter_time).total_seconds() // 60)
-
-
-@dataclass
-class Bill:
-    plate: str
-    kind: str
-    enter_time: datetime
-    exit_time: datetime
-    minutes: int
-    free_minutes: int
-    first_hours: int
-    first_price: Decimal
-    extra_price: Decimal
-    day_cap: Decimal
-    billable_minutes: int = 0
-    extra_hours: int = 0
-    total: Decimal = Decimal("0.00")
-    capped: bool = False
-    lines: list = field(default_factory=list)
+from parking.models import Bill, VehicleRow
 
 
 PLATES = [
@@ -64,14 +34,14 @@ class MockService:
     def __init__(self):
         now = datetime.now()
         self._rows = [
-            VehicleRow("陕A·8K3M9", "blue", now - timedelta(minutes=42)),
-            VehicleRow("陕A·6T2F7", "blue", now - timedelta(hours=1, minutes=18)),
-            VehicleRow("陕A·D9527", "green", now - timedelta(hours=2, minutes=5)),
-            VehicleRow("陕A·3W8Q1", "blue", now - timedelta(hours=3, minutes=27)),
-            VehicleRow("陕A·F2066", "yellow", now - timedelta(hours=4, minutes=12)),
-            VehicleRow("陕A·9C4L2", "blue", now - timedelta(hours=5, minutes=48)),
-            VehicleRow("陕A·1B7N5", "blue", now - timedelta(hours=7, minutes=3)),
-            VehicleRow("陕A·5H0R8", "green", now - timedelta(hours=11, minutes=36)),
+            VehicleRow(1, "陕A·8K3M9", "blue", now - timedelta(minutes=42)),
+            VehicleRow(2, "陕A·6T2F7", "blue", now - timedelta(hours=1, minutes=18)),
+            VehicleRow(3, "陕A·D9527", "green", now - timedelta(hours=2, minutes=5)),
+            VehicleRow(4, "陕A·3W8Q1", "blue", now - timedelta(hours=3, minutes=27)),
+            VehicleRow(5, "陕A·F2066", "yellow", now - timedelta(hours=4, minutes=12)),
+            VehicleRow(6, "陕A·9C4L2", "blue", now - timedelta(hours=5, minutes=48)),
+            VehicleRow(7, "陕A·1B7N5", "blue", now - timedelta(hours=7, minutes=3)),
+            VehicleRow(8, "陕A·5H0R8", "green", now - timedelta(hours=11, minutes=36)),
         ]
         self._cursor = 0
         self._today_count = 86
@@ -129,6 +99,7 @@ class MockService:
         minutes = int((now - enter).total_seconds() // 60)
         total, extra_hours, capped, billable = self._calc(minutes)
         bill = Bill(
+            record_id=row.record_id if row else 0,
             plate=plate, kind=kind, enter_time=enter, exit_time=now, minutes=minutes,
             free_minutes=self.FREE_MINUTES, first_hours=self.FIRST_HOURS,
             first_price=self.FIRST_PRICE, extra_price=self.EXTRA_PRICE,
@@ -158,7 +129,8 @@ class MockService:
         """入口抬杆后调用：新增一条在场记录。"""
         if any(r.plate == plate for r in self._rows):
             return
-        self._rows.insert(0, VehicleRow(plate, kind, datetime.now()))
+        next_id = max((row.record_id for row in self._rows), default=0) + 1
+        self._rows.insert(0, VehicleRow(next_id, plate, kind, datetime.now()))
         self._today_count += 1
 
     def exit_vehicle(self, plate: str):
