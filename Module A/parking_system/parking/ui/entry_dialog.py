@@ -26,7 +26,7 @@ COLOR_OPTIONS = (
 
 
 class EntryDialog(QDialog):
-    def __init__(self, vehicle_types: list[str], parent=None):
+    def __init__(self, vehicle_types: list[str], parent=None, *, initial_plate: str = ""):
         super().__init__(parent)
         self.setWindowTitle("人工进场登记")
         self.setModal(True)
@@ -41,6 +41,7 @@ class EntryDialog(QDialog):
         self.plate_edit = QLineEdit()
         self.plate_edit.setPlaceholderText("例如：陕A12345")
         self.plate_edit.setMaxLength(16)
+        self.plate_edit.setText(initial_plate)
         form.addRow("车牌号", self.plate_edit)
 
         self.vehicle_type = QComboBox()

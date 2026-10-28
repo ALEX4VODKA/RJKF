@@ -3,12 +3,14 @@
 from datetime import datetime
 
 from PyQt5.QtCore import QRectF, Qt, QTimer
-from PyQt5.QtGui import QColor, QFont, QPainter, QPen, QPixmap
+from PyQt5.QtGui import QColor, QFont, QImage, QPainter, QPen, QPixmap
 from PyQt5.QtWidgets import (
     QAbstractItemView, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
-    QDialog, QInputDialog, QMainWindow, QPushButton, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget,
+    QDialog, QFileDialog, QInputDialog, QLineEdit, QMainWindow, QMessageBox,
+    QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
+
+from parking.recognition.thread import RecognitionThread
 
 from . import icons
 from . import theme as T
@@ -88,6 +90,7 @@ class MainWindow(QMainWindow):
         rule_service=None,
         user_session=None,
         auth_service=None,
+        recognizer=None,
     ):
         super().__init__()
         self.service = service
@@ -96,7 +99,11 @@ class MainWindow(QMainWindow):
         self.rule_service = rule_service
         self.user_session = user_session
         self.auth_service = auth_service
+        self.recognizer = recognizer
         self._persistent_mode = hasattr(service, "enter_vehicle")
+        self._recognition_enabled = self._persistent_mode and recognizer is not None
+        self._recognition_thread = None
+        self._close_after_recognition = False
         self._pending_entry = None
         self._pending_exit = None
         self._last_event = "—"
@@ -168,7 +175,11 @@ class MainWindow(QMainWindow):
         h.addLayout(titles)
         h.addStretch(1)
 
-        input_label = "人工录入" if self._persistent_mode else "识别服务"
+        input_label = (
+            "图片 / 视频识别"
+            if self._recognition_enabled
+            else ("人工录入" if self._persistent_mode else "识别服务")
+        )
         for label, color in (("数据库", T.ACCENT), (input_label, T.ACCENT), ("3D 场景", T.PRIMARY)):
             h.addWidget(StatusDot(color))
             lb = QLabel(label)
@@ -220,20 +231,41 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(14)
 
-        ops = Card("人工操作")
-        self.btn_entry = QPushButton("进场登记")
+        ops = Card("出入口操作" if self._recognition_enabled else "人工操作")
+        self.btn_entry = QPushButton("识别进场" if self._recognition_enabled else "进场登记")
         self.btn_entry.setObjectName("primary")
         self.btn_entry.setCursor(Qt.PointingHandCursor)
         self.btn_entry.setFixedHeight(50)
-        self.btn_entry.clicked.connect(lambda: self._on_entry())
+        if self._recognition_enabled:
+            self.btn_entry.clicked.connect(lambda: self._select_media("entry"))
+        else:
+            self.btn_entry.clicked.connect(lambda: self._on_entry())
         ops.add(self.btn_entry)
 
-        self.btn_exit = QPushButton("出场结算")
+        self.btn_exit = QPushButton("识别出场" if self._recognition_enabled else "出场结算")
         self.btn_exit.setObjectName("ghost")
         self.btn_exit.setCursor(Qt.PointingHandCursor)
         self.btn_exit.setFixedHeight(46)
-        self.btn_exit.clicked.connect(self._on_exit)
+        if self._recognition_enabled:
+            self.btn_exit.clicked.connect(lambda: self._select_media("exit"))
+        else:
+            self.btn_exit.clicked.connect(self._on_exit)
         ops.add(self.btn_exit)
+
+        if self._recognition_enabled:
+            manual = QHBoxLayout()
+            manual.setSpacing(8)
+            self.btn_manual_entry = QPushButton("人工进场")
+            self.btn_manual_entry.setObjectName("ghost")
+            self.btn_manual_entry.setFixedHeight(38)
+            self.btn_manual_entry.clicked.connect(lambda: self._on_entry())
+            manual.addWidget(self.btn_manual_entry)
+            self.btn_manual_exit = QPushButton("人工出场")
+            self.btn_manual_exit.setObjectName("ghost")
+            self.btn_manual_exit.setFixedHeight(38)
+            self.btn_manual_exit.clicked.connect(self._on_exit)
+            manual.addWidget(self.btn_manual_exit)
+            ops.add_layout(manual)
 
         self.btn_lower = QPushButton("车辆已通过 · 落杆")
         self.btn_lower.setObjectName("ghost")
@@ -243,15 +275,19 @@ class MainWindow(QMainWindow):
         self.btn_lower.clicked.connect(self._on_lower)
         ops.add(self.btn_lower)
 
-        tip = QLabel("识别 → 抬杆 → 缴费 / 放行 → 落杆")
+        tip = QLabel("图片 / 视频识别 → 业务校验 → 抬杆 → 落杆")
         tip.setObjectName("cardHint")
         tip.setWordWrap(True)
         ops.add(tip)
         lay.addWidget(ops, 0)
 
         rec = Card(
-            "人工录入" if self._persistent_mode else "入口识别",
-            "PHASE 2" if self._persistent_mode else "CAM-01",
+            "真实车牌识别"
+            if self._recognition_enabled
+            else ("人工录入" if self._persistent_mode else "入口识别"),
+            "PHASE 3"
+            if self._recognition_enabled
+            else ("PHASE 2" if self._persistent_mode else "CAM-01"),
         )
         self.capture = CaptureSurface()
         self.capture.setFixedHeight(148)
@@ -275,7 +311,9 @@ class MainWindow(QMainWindow):
         rec.add(self.conf_bar)
 
         self.rec_hint = QLabel(
-            "点击「进场登记」录入车牌"
+            "选择真实图片或视频；识别失败可转人工录入"
+            if self._recognition_enabled
+            else "点击「进场登记」录入车牌"
             if self._persistent_mode
             else "点击「进场登记」开始识别"
         )
@@ -287,6 +325,9 @@ class MainWindow(QMainWindow):
         mini = QHBoxLayout()
         mini.setSpacing(14)
         mini_values = (
+            (("输入方式", "图片/视频"), ("识别引擎", "HyperLPR3"), ("失败处理", "转人工"))
+            if self._recognition_enabled
+            else
             (("输入方式", "人工"), ("数据保存", "SQLite"), ("识别接入", "Phase 3"))
             if self._persistent_mode
             else (("识别成功率", "97.6%"), ("平均耗时", "0.8 s"), ("转人工", "2 次"))
@@ -443,14 +484,165 @@ class MainWindow(QMainWindow):
             self.ev_labels[0].setText(self._last_event)
 
     # ------------------------------------------------------------------ 交互
-    def _on_entry(self, plate=None, conf=None, kind=None, vehicle_type=None):
+    def _select_media(self, direction: str):
+        if self._recognition_thread is not None:
+            toast(self, "识别任务正在运行，请稍候", "warn")
+            return
+        if self.scene.has_open_gate() or self._pending_entry or self._pending_exit:
+            toast(self, "当前车道流程尚未结束，请先确认车辆通过并落杆", "warn")
+            return
+        path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "选择进场图片或视频" if direction == "entry" else "选择出场图片或视频",
+            "",
+            "车牌媒体 (*.jpg *.jpeg *.png *.bmp *.mp4 *.avi *.mov *.mkv)",
+        )
+        if not path:
+            return
+        image = QImage(path)
+        if not image.isNull():
+            self.capture.set_frame(image)
+        self.rec_hint.setText("正在初始化模型并识别，界面可继续响应…")
+        self._log(f"{'进场' if direction == 'entry' else '出场'}识别开始 · {path}")
+        self._set_lane_buttons(False)
+        thread = RecognitionThread(self.recognizer, path, self)
+        self._recognition_thread = thread
+        thread.recognized.connect(
+            lambda result, flow=direction: self._recognition_succeeded(flow, result)
+        )
+        thread.failed.connect(
+            lambda error, flow=direction: self._recognition_failed(flow, error)
+        )
+        thread.finished.connect(lambda current=thread: self._recognition_finished(current))
+        thread.start()
+
+    def _recognition_succeeded(self, direction: str, result):
+        candidates = tuple(getattr(result, "candidates", ()) or ())
+        selected = None
+        if len(candidates) > 1:
+            labels = [
+                f"{candidate.plate}  ·  置信度 {candidate.confidence:.3f}"
+                for candidate in candidates
+            ]
+            label, ok = QInputDialog.getItem(
+                self,
+                "选择目标车牌",
+                "画面中检测到多个车牌，请选择本车道车辆：",
+                labels,
+                0,
+                False,
+            )
+            if not ok:
+                self.rec_hint.setText("已取消目标车牌选择，可重新识别或人工处理")
+                self._log("多车牌识别 · 操作员取消选择")
+                return
+            selected = candidates[labels.index(label)]
+        elif candidates:
+            selected = candidates[0]
+
+        plate = selected.plate if selected else result.plate
+        confidence = selected.confidence if selected else result.confidence
+        kind = selected.kind if selected else result.kind
+        image = QImage(result.photo_path)
+        if not image.isNull():
+            self.capture.set_frame(image)
+        self.plate.set_plate(plate, kind)
+        self.conf_value.setText(f"{confidence:.3f}")
+        self.conf_bar.set_value(confidence)
+        self.rec_hint.setText(f"识别成功 · {result.elapsed_ms} ms · 正在校验业务")
+        self._log(
+            f"{'进场' if direction == 'entry' else '出场'}识别成功 · "
+            f"{plate} · 置信度 {confidence:.3f}"
+        )
+        if direction == "entry":
+            self._on_entry(
+                plate,
+                confidence,
+                kind,
+                entry_photo=result.photo_path,
+            )
+        else:
+            self._on_exit(plate, result.photo_path)
+
+    def _recognition_failed(self, direction: str, error):
+        photo_path = getattr(error, "photo_path", None)
+        suggested = getattr(error, "suggested_plate", None) or ""
+        if photo_path:
+            image = QImage(photo_path)
+            if not image.isNull():
+                self.capture.set_frame(image)
+        self.conf_value.setText("失败")
+        self.conf_bar.set_value(float(getattr(error, "confidence", 0.0) or 0.0))
+        self.rec_hint.setText("识别失败，可重试选择媒体或转人工处理")
+        self._log(f"识别失败 · {error}")
+        answer = QMessageBox.question(
+            self,
+            "车牌识别失败",
+            f"{error}\n\n是否转人工处理？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        if direction == "entry":
+            self._on_entry(entry_photo=photo_path, initial_plate=suggested)
+            return
+        plate, ok = QInputDialog.getText(
+            self,
+            "人工出场",
+            "请核对并输入车牌号：",
+            QLineEdit.Normal,
+            suggested,
+        )
+        if ok and plate.strip():
+            self._on_exit(plate.strip(), photo_path)
+
+    def _recognition_finished(self, thread):
+        if self._recognition_thread is thread:
+            self._recognition_thread = None
+        thread.deleteLater()
+        busy = self.scene.has_open_gate() or self._pending_entry or self._pending_exit
+        self._set_lane_buttons(not busy)
+        if self._close_after_recognition:
+            self._close_after_recognition = False
+            QTimer.singleShot(0, self.close)
+
+    def _set_lane_buttons(self, enabled: bool):
+        self.btn_entry.setEnabled(enabled)
+        self.btn_exit.setEnabled(enabled)
+        if hasattr(self, "btn_manual_entry"):
+            self.btn_manual_entry.setEnabled(enabled)
+            self.btn_manual_exit.setEnabled(enabled)
+
+    def closeEvent(self, event):
+        if self._recognition_thread is not None and self._recognition_thread.isRunning():
+            self._close_after_recognition = True
+            self.rec_hint.setText("正在安全结束识别任务，完成后窗口将关闭…")
+            self._log("等待后台识别任务结束后关闭")
+            event.ignore()
+            return
+        super().closeEvent(event)
+
+    def _on_entry(
+        self,
+        plate=None,
+        conf=None,
+        kind=None,
+        vehicle_type=None,
+        entry_photo=None,
+        initial_plate=None,
+    ):
         """真实服务先登记再抬杆；MockService 保留 A 的原演示入口。"""
         if self._persistent_mode:
             if self.scene.has_open_gate() or self._pending_entry or self._pending_exit:
                 toast(self, "当前车道流程尚未结束，请先确认车辆通过并落杆", "warn")
                 return
             if plate is None:
-                dialog = EntryDialog(self.service.available_vehicle_types(), self)
+                dialog = EntryDialog(
+                    self.service.available_vehicle_types(),
+                    self,
+                    initial_plate=initial_plate or "",
+                )
                 if dialog.exec_() != QDialog.Accepted:
                     return
                 plate, vehicle_type, kind = dialog.values
@@ -462,6 +654,7 @@ class MainWindow(QMainWindow):
                     plate,
                     vehicle_type,
                     kind,
+                    entry_photo=entry_photo,
                     source="manual" if conf is None else "recognition",
                 )
             except (ValueError, PermissionError) as exc:
@@ -475,8 +668,7 @@ class MainWindow(QMainWindow):
             self.rec_hint.setText("登记已保存，入口道闸抬杆中")
             self._log(f"进场登记 · {entry.plate} · {vehicle_type}")
             toast(self, f"{entry.plate} 已登记，正在抬杆", "ok")
-            self.btn_entry.setEnabled(False)
-            self.btn_exit.setEnabled(False)
+            self._set_lane_buttons(False)
             self._refresh_table()
             self.scene.raise_gate("in")
             return
@@ -548,30 +740,34 @@ class MainWindow(QMainWindow):
                 self._log(f"离场完成 · {plate}")
         if self._persistent_mode and gate == "in":
             self._pending_entry = None
-        self.btn_entry.setEnabled(True)
-        self.btn_exit.setEnabled(True)
+        self._set_lane_buttons(True)
         self._log(f"{'入口' if gate == 'in' else '出口'}落杆 · 等待下一辆车")
 
-    def _on_exit(self):
+    def _on_exit(self, plate=None, exit_photo=None):
         if self._persistent_mode and (
             self.scene.has_open_gate() or self._pending_entry or self._pending_exit
         ):
             toast(self, "当前车道流程尚未结束，请先确认车辆通过并落杆", "warn")
             return
-        row = self.table.currentRow()
-        if row >= 0:
-            plate = self.table.item(row, 0).text()
-        elif self._persistent_mode:
-            plate, ok = QInputDialog.getText(self, "按车牌出场", "请输入车牌号：")
-            if not ok or not plate.strip():
+        if plate is None:
+            row = self.table.currentRow()
+            if row >= 0:
+                plate = self.table.item(row, 0).text()
+            elif self._persistent_mode:
+                plate, ok = QInputDialog.getText(self, "按车牌出场", "请输入车牌号：")
+                if not ok or not plate.strip():
+                    return
+            elif self.table.rowCount() > 0:
+                plate = self.table.item(0, 0).text()
+            else:
+                toast(self, "当前没有在场车辆", "warn")
                 return
-        elif self.table.rowCount() > 0:
-            plate = self.table.item(0, 0).text()
-        else:
-            toast(self, "当前没有在场车辆", "warn")
-            return
         try:
-            bill = self.service.bill(plate)
+            bill = (
+                self.service.bill(plate, exit_photo=exit_photo)
+                if self._persistent_mode
+                else self.service.bill(plate)
+            )
         except (ValueError, PermissionError) as exc:
             toast(self, str(exc), "warn")
             self._log(f"出场查询失败 · {exc}")
@@ -663,7 +859,6 @@ class MainWindow(QMainWindow):
             toast(self, "当前已有闸杆抬起，请先完成该车道流程", "warn")
             return
         self._pending_exit = (bill.record_id, bill.plate)
-        self.btn_entry.setEnabled(False)
-        self.btn_exit.setEnabled(False)
+        self._set_lane_buttons(False)
         self._refresh_table()
         self.scene.raise_gate("out")
