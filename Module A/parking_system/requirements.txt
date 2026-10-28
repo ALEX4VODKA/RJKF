@@ -1,3 +1,3 @@
-PyQt5>=5.15.0
+PyQt5==5.15.11
 # 实时 3D 模式需要（不装则自动降级为视频/占位）
-PyQtWebEngine>=5.15.0
+PyQtWebEngine==5.15.7
