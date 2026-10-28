@@ -40,6 +40,7 @@
   var demoAnim = null;             // 演示场景的闸杆补间
   var actingTimer = null;          // 动画完成兜底定时器
   var mode = 'demo';
+  var resizeObserver = null;
 
   // ------------------------------------------------------------ 工具
   function send(fn) {
@@ -89,13 +90,18 @@
     clock = new THREE.Clock();
     resize();
     window.addEventListener('resize', resize);
+    if (typeof ResizeObserver === 'function') {
+      resizeObserver = new ResizeObserver(resize);
+      resizeObserver.observe(document.documentElement);
+    }
     animate();
   }
 
   function resize() {
-    var w = window.innerWidth || 640;
-    var h = window.innerHeight || 360;
-    renderer.setSize(w, h, false);
+    var w = Math.max(1, document.documentElement.clientWidth || window.innerWidth || 640);
+    var h = Math.max(1, document.documentElement.clientHeight || window.innerHeight || 360);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(w, h, true);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
   }
@@ -273,7 +279,7 @@
         pos: pos.clone(),
         quat: quat.clone(),
         lookAtScene: !obj.isCamera,
-        look: new THREE.Vector3(0, 1, 0)
+        look: obj.isCamera ? null : new THREE.Vector3(0, 1, 0)
       };
       if (obj.isCamera) obj.visible = false;
     });
@@ -353,7 +359,7 @@
     var target = anchors[key];
     if (!target) { if (onDone) onDone(); return; }
     var toPos = target.pos.clone();
-    if (target.look) {
+    if (target.look && target.lookAtScene) {
       // 画面越窄，镜头退得越远，保证道闸完整入镜
       var pull = Math.max(1, 1.45 / Math.max(0.55, camera.aspect));
       toPos = target.look.clone().add(
