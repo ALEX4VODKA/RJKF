@@ -34,6 +34,32 @@ except Exception:  # pragma: no cover - 没装 WebEngine 时由工厂降级
     QWebEnginePage = QWebEngineProfile = object
 
 
+if HAS_WEBENGINE:
+    class _WebGLView(QWebEngineView):
+        """只在控件获得真实绘制表面后通知加载页面。"""
+
+        first_visible = pyqtSignal()
+
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self._first_visible_emitted = False
+            self._show_scheduled = False
+
+        def showEvent(self, event):
+            super().showEvent(event)
+            if not self._first_visible_emitted and not self._show_scheduled:
+                self._show_scheduled = True
+                QTimer.singleShot(0, self._emit_first_visible)
+
+        def _emit_first_visible(self):
+            self._show_scheduled = False
+            if self.isVisible() and not self._first_visible_emitted:
+                self._first_visible_emitted = True
+                self.first_visible.emit()
+else:  # pragma: no cover - 仅用于缺少 PyQtWebEngine 的降级环境
+    _WebGLView = object
+
+
 # ------------------------------------------------------------------ 本地静态服务
 class _QuietHandler(SimpleHTTPRequestHandler):
     """只服务 parking_system 目录，不打印访问日志。"""
@@ -136,11 +162,12 @@ class WebGLAnimator(GateAnimator):
         self._pending = None
         self._busy = False
         self._direction = None
+        self._load_started = False
 
         server = _AssetServer.get(app_root)
         self._url = QUrl(f"http://127.0.0.1:{server.port}/viewer/index.html")
 
-        self._view = QWebEngineView()
+        self._view = _WebGLView()
         self._view.setMinimumSize(160, 90)
         self._page = QWebEnginePage(_profile(app_root), self._view)
         self._view.setPage(self._page)
@@ -168,9 +195,7 @@ class WebGLAnimator(GateAnimator):
         self._init_timer = QTimer(self)
         self._init_timer.setSingleShot(True)
         self._init_timer.timeout.connect(self._on_init_timeout)
-        self._init_timer.start(10000)
-
-        self._view.load(self._url)
+        self._view.first_visible.connect(self._start_load)
 
     # ------------------------------------------------------------------
     def surface(self):
@@ -201,6 +226,13 @@ class WebGLAnimator(GateAnimator):
     def _call(self, js: str):
         self._page.runJavaScript(js)
 
+    def _start_load(self):
+        if self._load_started:
+            return
+        self._load_started = True
+        self._init_timer.start(30000)
+        self._view.load(self._url)
+
     # ------------------------------------------------------------------
     def _on_init_timeout(self):
         if not self._ready:
@@ -210,6 +242,10 @@ class WebGLAnimator(GateAnimator):
         self._init_timer.stop()
         self._ready = True
         self._mode = mode
+        # 页面可能在控件刚显示时完成加载；主动同步一次真实视口，避免首帧沿用
+        # 隐藏阶段的默认尺寸，表现为首次空白、手动刷新后才正常。
+        self._call("window.dispatchEvent(new Event('resize'))")
+        self._view.update()
         self.meta_changed.emit()
         if self._pending:
             direction, action = self._pending
@@ -236,8 +272,10 @@ class WebGLAnimator(GateAnimator):
             self.failed.emit("3D 动画超时（浏览器未回调）")
 
     def stop(self):
+        self._init_timer.stop()
         self._watchdog.stop()
         self._busy = False
+        self._pending = None
 
     def is_busy(self) -> bool:
         return self._busy

@@ -10,6 +10,7 @@
 用法（需要装了 PyQtWebEngine 的 Python）：
     python tools/viewer_test.py [输出目录]
 """
+import json
 import os
 import sys
 
@@ -35,6 +36,22 @@ def spin(ms):
     loop = QEventLoop()
     QTimer.singleShot(ms, loop.quit)
     loop.exec_()
+
+
+def eval_js(page, script, timeout_ms=3000):
+    """等待一次 JavaScript 回调，避免固定 sleep 在模型较大时产生误判。"""
+    loop = QEventLoop()
+    result = {"done": False, "value": None}
+
+    def finished(value):
+        result["done"] = True
+        result["value"] = value
+        loop.quit()
+
+    page.runJavaScript(script, finished)
+    QTimer.singleShot(timeout_ms, loop.quit)
+    loop.exec_()
+    return result["value"] if result["done"] else None
 
 
 class Page(QWebEnginePage):
@@ -91,6 +108,23 @@ def main():
     ok &= bool(ready)
 
     if ok:
+        metrics_value = eval_js(
+            page,
+            "JSON.stringify((function(){"
+            "var c=document.querySelector('canvas'),r=c.getBoundingClientRect();"
+            "return {innerWidth:window.innerWidth,innerHeight:window.innerHeight,"
+            "dpr:window.devicePixelRatio,rectWidth:r.width,rectHeight:r.height,"
+            "bufferWidth:c.width,bufferHeight:c.height};})())"
+        )
+        layout = json.loads(metrics_value or "{}")
+        print("layout:", layout)
+        ok &= abs(layout.get("rectWidth", 0) - layout.get("innerWidth", -10)) <= 2
+        ok &= abs(layout.get("rectHeight", 0) - layout.get("innerHeight", -10)) <= 2
+        expected_w = layout.get("innerWidth", 0) * min(layout.get("dpr", 1), 2)
+        expected_h = layout.get("innerHeight", 0) * min(layout.get("dpr", 1), 2)
+        ok &= abs(layout.get("bufferWidth", 0) - expected_w) <= 2
+        ok &= abs(layout.get("bufferHeight", 0) - expected_h) <= 2
+
         # 触发入口抬杆
         page.runJavaScript("DSHParking.trigger('in','open')")
         waited = 0
@@ -102,10 +136,7 @@ def main():
         ok &= ("stage", "in", "action") in events
         ok &= ("finished", "in", "open") in events
 
-        data = {}
-        page.runJavaScript("DSHParking.snapshot()", lambda v: data.setdefault("d", v))
-        spin(500)
-        url_data = data.get("d") or ""
+        url_data = eval_js(page, "DSHParking.snapshot()", 5000) or ""
         if "," in url_data:
             import base64
             raw = base64.b64decode(url_data.split(",", 1)[1])
@@ -116,6 +147,14 @@ def main():
         else:
             print("snapshot empty")
             ok = False
+
+        # canvas.toDataURL 会截取完整绘图缓冲区；额外截取实际控件，防止高 DPI
+        # 下 canvas 的 CSS 尺寸被放大后在 QWebEngineView 内发生裁切。
+        view_path = os.path.join(out, f"webgl_view_{vw}x{vh}.png")
+        grabbed = view.grab()
+        saved = grabbed.save(view_path, "PNG")
+        print(f"view -> {view_path} ({grabbed.width()}x{grabbed.height()})")
+        ok &= saved and grabbed.width() > 0 and grabbed.height() > 0
 
     print("VIEWER", "PASS" if ok else "FAIL")
     return 0 if ok else 1

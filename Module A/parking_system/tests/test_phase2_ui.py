@@ -6,13 +6,15 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QPA_FONTDIR", r"C:\Windows\Fonts")
 
 import pytest
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QApplication, QWidget
 
+from parking.anim.base import GateAnimator, RAISE
 from parking.data import Database
 from parking.services.admin_service import AuthService
 from parking.services.parking_service import ParkingService
 from parking.ui.exit_dialog import ExitDialog
 from parking.ui.main_window import MainWindow
+from parking.ui.scene_panel import ScenePanel
 
 
 @pytest.fixture(scope="module")
@@ -89,3 +91,51 @@ def test_main_window_real_flow_registers_before_raise_and_exits_after_lower(
     window._tick.stop()
     window._refresh.stop()
     window.close()
+
+
+def test_scene_reload_retries_failed_gate_animation(qt_app, monkeypatch):
+    created = []
+
+    class FakeAnimator(GateAnimator):
+        def __init__(self):
+            super().__init__()
+            self.widget = QWidget()
+            self.triggered = []
+
+        def surface(self):
+            return self.widget
+
+        def trigger(self, gate, direction):
+            self.triggered.append((gate, direction))
+
+        def stop(self):
+            pass
+
+        def mode_name(self):
+            return "测试 3D"
+
+    def fake_create(*_args, **_kwargs):
+        animator = FakeAnimator()
+        created.append(animator)
+        return animator
+
+    monkeypatch.setattr("parking.ui.scene_panel.create_animator", fake_create)
+    panel = ScenePanel("unused", "auto")
+    assert len(created) == 1
+
+    panel.show()
+    qt_app.processEvents()
+    qt_app.processEvents()
+    panel.raise_gate("in")
+    created[0].failed.emit("模拟超时")
+
+    assert panel.pill_in.text() == "入口 · 动画失败"
+    assert panel._retry_operation == ("in", RAISE)
+
+    panel._load()
+
+    assert created[1].triggered == [("in", RAISE)]
+    created[1].finished.emit(RAISE)
+    assert panel.pill_in.text() == "入口 · 已抬起"
+    assert panel._retry_operation is None
+    panel.close()
