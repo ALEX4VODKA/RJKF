@@ -131,7 +131,7 @@ def qss() -> str:
     QPushButton#linkBtn:hover {{ color: {PRIMARY}; }}
 
     /* ---------------- 输入 ---------------- */
-    QLineEdit {{
+    QLineEdit, QSpinBox, QDoubleSpinBox, QDateTimeEdit {{
         background: {PANEL_HI};
         border: 1px solid {LINE};
         border-radius: {RADIUS_SM}px;
@@ -141,7 +141,9 @@ def qss() -> str:
         selection-background-color: #CFE0FF;
         selection-color: {TEXT};
     }}
-    QLineEdit:focus {{ border-color: {PRIMARY}; background: {PANEL}; }}
+    QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QDateTimeEdit:focus {{
+        border-color: {PRIMARY}; background: {PANEL};
+    }}
 
     /* ---------------- 表格 ---------------- */
     QTableWidget {{

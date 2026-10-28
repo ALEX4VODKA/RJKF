@@ -6,13 +6,19 @@
 """
 import os
 import sys
+from pathlib import Path
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import QApplication
 
+from parking.config import RuntimePaths
+from parking.data import Database
+from parking.services.admin_service import AuthService
 from parking.services.mock_service import MockService
+from parking.services.rule_service import RuleService
 from parking.ui import theme as T
+from parking.ui.auth_dialog import AuthDialog
 from parking.ui.main_window import MainWindow
 from parking.ui.widgets import brand_pixmap
 
@@ -25,6 +31,14 @@ def _app_icon() -> QIcon:
 
 
 def main():
+    runtime_paths = RuntimePaths.from_environment(Path(BASE_DIR))
+    runtime_paths.ensure_directories()
+    database = Database(runtime_paths.database)
+    database_existed = runtime_paths.database.exists()
+    database.initialize()
+    if database_existed:
+        database.backup_daily(runtime_paths.backups)
+
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     # QtWebEngine 要求：必须在 QApplication 创建前开启共享 GL 上下文
@@ -36,12 +50,25 @@ def main():
     app.setStyleSheet(T.qss())
     app.setWindowIcon(_app_icon())
 
-    win = MainWindow(MockService(), ANIM_DIR, os.environ.get("ANIM_MODE", "auto"))
+    auth_service = AuthService(database)
+    auth_dialog = AuthDialog(auth_service, bootstrap=not auth_service.has_accounts())
+    if auth_dialog.exec_() != AuthDialog.Accepted or auth_dialog.session is None:
+        return 0
+    if not database_existed:
+        database.backup_daily(runtime_paths.backups)
+
+    win = MainWindow(
+        MockService(),
+        ANIM_DIR,
+        os.environ.get("ANIM_MODE", "auto"),
+        rule_service=RuleService(database),
+        user_session=auth_dialog.session,
+    )
     win.setWindowIcon(_app_icon())
     win.show()
 
-    sys.exit(app.exec_())
+    return app.exec_()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

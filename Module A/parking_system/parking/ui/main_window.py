@@ -12,6 +12,7 @@ from PyQt5.QtWidgets import (
 from . import icons
 from . import theme as T
 from .exit_dialog import ExitDialog
+from .rule_dialog import RuleManagerDialog
 from .scene_panel import ScenePanel
 from .widgets import (
     BrandMark, Card, ConfidenceBar, LiveClock, PlateBadge, PlateDelegate,
@@ -75,11 +76,21 @@ class CaptureSurface(QWidget):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, service, anim_dir: str, anim_mode: str = "auto"):
+    def __init__(
+        self,
+        service,
+        anim_dir: str,
+        anim_mode: str = "auto",
+        *,
+        rule_service=None,
+        user_session=None,
+    ):
         super().__init__()
         self.service = service
         self._anim_dir = anim_dir
         self._anim_mode = anim_mode
+        self.rule_service = rule_service
+        self.user_session = user_session
         self._pending_entry = None
         self._pending_exit = None
         self._last_event = "—"
@@ -121,7 +132,10 @@ class MainWindow(QMainWindow):
 
         self.status_hint = QLabel("系统就绪 · 演示模式")
         self.statusBar().addWidget(self.status_hint)
-        right = QLabel("成员 A · 界面与动画模块 v2.1")
+        user_text = (
+            f"当前用户：{self.user_session.username} · " if self.user_session else ""
+        )
+        right = QLabel(user_text + "成员 A · 界面与动画模块 v2.1")
         right.setStyleSheet(f"color:{T.DIM}; font-size:11px;")
         self.statusBar().addPermanentWidget(right)
         self.statusBar().setFixedHeight(30)
@@ -155,9 +169,23 @@ class MainWindow(QMainWindow):
             h.addSpacing(6)
 
         h.addSpacing(10)
+        if self.rule_service is not None:
+            self.btn_rules = QPushButton("收费标准")
+            self.btn_rules.setObjectName("ghost")
+            self.btn_rules.setFixedHeight(34)
+            self.btn_rules.setCursor(Qt.PointingHandCursor)
+            self.btn_rules.clicked.connect(self._open_rule_manager)
+            h.addWidget(self.btn_rules)
+            h.addSpacing(4)
         self.clock = LiveClock()
         h.addWidget(self.clock)
         return bar
+
+    def _open_rule_manager(self):
+        if self.user_session is None or not self.user_session.is_admin:
+            toast(self, "收费标准仅管理员可管理", "warn")
+            return
+        RuleManagerDialog(self.rule_service, self.user_session, self).exec_()
 
     # ---------------- 左：人工操作
     def _build_left(self) -> QWidget:
