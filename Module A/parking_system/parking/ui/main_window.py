@@ -6,12 +6,15 @@ from PyQt5.QtCore import QRectF, Qt, QTimer
 from PyQt5.QtGui import QColor, QFont, QPainter, QPen, QPixmap
 from PyQt5.QtWidgets import (
     QAbstractItemView, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
-    QMainWindow, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QDialog, QInputDialog, QMainWindow, QPushButton, QTableWidget, QTableWidgetItem,
+    QVBoxLayout, QWidget,
 )
 
 from . import icons
 from . import theme as T
 from .exit_dialog import ExitDialog
+from .entry_dialog import EntryDialog
+from .history_dialog import ParkingHistoryDialog
 from .rule_dialog import RuleManagerDialog
 from .scene_panel import ScenePanel
 from .widgets import (
@@ -84,6 +87,7 @@ class MainWindow(QMainWindow):
         *,
         rule_service=None,
         user_session=None,
+        auth_service=None,
     ):
         super().__init__()
         self.service = service
@@ -91,6 +95,8 @@ class MainWindow(QMainWindow):
         self._anim_mode = anim_mode
         self.rule_service = rule_service
         self.user_session = user_session
+        self.auth_service = auth_service
+        self._persistent_mode = hasattr(service, "enter_vehicle")
         self._pending_entry = None
         self._pending_exit = None
         self._last_event = "—"
@@ -130,7 +136,8 @@ class MainWindow(QMainWindow):
         lay.addWidget(self._build_right(), 0)
         outer.addWidget(body, 1)
 
-        self.status_hint = QLabel("系统就绪 · 演示模式")
+        mode_text = "持久化业务模式" if self._persistent_mode else "演示模式"
+        self.status_hint = QLabel(f"系统就绪 · {mode_text}")
         self.statusBar().addWidget(self.status_hint)
         user_text = (
             f"当前用户：{self.user_session.username} · " if self.user_session else ""
@@ -161,7 +168,8 @@ class MainWindow(QMainWindow):
         h.addLayout(titles)
         h.addStretch(1)
 
-        for label, color in (("数据库", T.ACCENT), ("识别服务", T.ACCENT), ("3D 场景", T.PRIMARY)):
+        input_label = "人工录入" if self._persistent_mode else "识别服务"
+        for label, color in (("数据库", T.ACCENT), (input_label, T.ACCENT), ("3D 场景", T.PRIMARY)):
             h.addWidget(StatusDot(color))
             lb = QLabel(label)
             lb.setStyleSheet(f"color:{T.MUTED}; font-size:11px;")
@@ -177,6 +185,14 @@ class MainWindow(QMainWindow):
             self.btn_rules.clicked.connect(self._open_rule_manager)
             h.addWidget(self.btn_rules)
             h.addSpacing(4)
+        if self._persistent_mode:
+            self.btn_history = QPushButton("停车记录")
+            self.btn_history.setObjectName("ghost")
+            self.btn_history.setFixedHeight(34)
+            self.btn_history.setCursor(Qt.PointingHandCursor)
+            self.btn_history.clicked.connect(self._open_history)
+            h.addWidget(self.btn_history)
+            h.addSpacing(4)
         self.clock = LiveClock()
         h.addWidget(self.clock)
         return bar
@@ -186,6 +202,15 @@ class MainWindow(QMainWindow):
             toast(self, "收费标准仅管理员可管理", "warn")
             return
         RuleManagerDialog(self.rule_service, self.user_session, self).exec_()
+
+    def _open_history(self):
+        if self.user_session is None or not self.user_session.is_admin:
+            toast(self, "停车历史仅管理员可查询", "warn")
+            return
+        try:
+            ParkingHistoryDialog(self.service, self.user_session, self).exec_()
+        except (ValueError, PermissionError) as exc:
+            toast(self, str(exc), "warn")
 
     # ---------------- 左：人工操作
     def _build_left(self) -> QWidget:
@@ -224,7 +249,10 @@ class MainWindow(QMainWindow):
         ops.add(tip)
         lay.addWidget(ops, 0)
 
-        rec = Card("入口识别", "CAM-01")
+        rec = Card(
+            "人工录入" if self._persistent_mode else "入口识别",
+            "PHASE 2" if self._persistent_mode else "CAM-01",
+        )
         self.capture = CaptureSurface()
         self.capture.setFixedHeight(148)
         rec.add(self.capture)
@@ -246,7 +274,11 @@ class MainWindow(QMainWindow):
         self.conf_bar = ConfidenceBar(0.0)
         rec.add(self.conf_bar)
 
-        self.rec_hint = QLabel("点击「进场登记」开始识别")
+        self.rec_hint = QLabel(
+            "点击「进场登记」录入车牌"
+            if self._persistent_mode
+            else "点击「进场登记」开始识别"
+        )
         self.rec_hint.setObjectName("cardHint")
         self.rec_hint.setWordWrap(True)
         rec.add(self.rec_hint)
@@ -254,7 +286,12 @@ class MainWindow(QMainWindow):
 
         mini = QHBoxLayout()
         mini.setSpacing(14)
-        for title, value in (("识别成功率", "97.6%"), ("平均耗时", "0.8 s"), ("转人工", "2 次")):
+        mini_values = (
+            (("输入方式", "人工"), ("数据保存", "SQLite"), ("识别接入", "Phase 3"))
+            if self._persistent_mode
+            else (("识别成功率", "97.6%"), ("平均耗时", "0.8 s"), ("转人工", "2 次"))
+        )
+        for title, value in mini_values:
             box = QVBoxLayout()
             box.setSpacing(0)
             v = QLabel(value)
@@ -347,6 +384,7 @@ class MainWindow(QMainWindow):
         for i, r in enumerate(rows):
             item0 = QTableWidgetItem(r.plate)
             item0.setData(Qt.UserRole, r.kind)
+            item0.setData(Qt.UserRole + 1, getattr(r, "record_id", 0))
             self.table.setItem(i, 0, item0)
 
             it1 = QTableWidgetItem(r.enter_time.strftime("%H:%M"))
@@ -405,12 +443,44 @@ class MainWindow(QMainWindow):
             self.ev_labels[0].setText(self._last_event)
 
     # ------------------------------------------------------------------ 交互
-    def _on_entry(self, plate=None, conf=None, kind=None):
-        """进场：识别 → 抬杆。
+    def _on_entry(self, plate=None, conf=None, kind=None, vehicle_type=None):
+        """真实服务先登记再抬杆；MockService 保留 A 的原演示入口。"""
+        if self._persistent_mode:
+            if self.scene.has_open_gate() or self._pending_entry or self._pending_exit:
+                toast(self, "当前车道流程尚未结束，请先确认车辆通过并落杆", "warn")
+                return
+            if plate is None:
+                dialog = EntryDialog(self.service.available_vehicle_types(), self)
+                if dialog.exec_() != QDialog.Accepted:
+                    return
+                plate, vehicle_type, kind = dialog.values
+                conf = None
+            vehicle_type = vehicle_type or "小型车"
+            kind = kind or "blue"
+            try:
+                entry = self.service.enter_vehicle(
+                    plate,
+                    vehicle_type,
+                    kind,
+                    source="manual" if conf is None else "recognition",
+                )
+            except (ValueError, PermissionError) as exc:
+                toast(self, str(exc), "warn")
+                self._log(f"进场失败 · {exc}")
+                return
+            self._pending_entry = (entry.record_id, entry.plate, entry.kind)
+            self.plate.set_plate(entry.plate, entry.kind)
+            self.conf_value.setText("人工" if conf is None else f"{conf:.3f}")
+            self.conf_bar.set_value(1.0 if conf is None else conf)
+            self.rec_hint.setText("登记已保存，入口道闸抬杆中")
+            self._log(f"进场登记 · {entry.plate} · {vehicle_type}")
+            toast(self, f"{entry.plate} 已登记，正在抬杆", "ok")
+            self.btn_entry.setEnabled(False)
+            self.btn_exit.setEnabled(False)
+            self._refresh_table()
+            self.scene.raise_gate("in")
+            return
 
-        识别结果可以由外部传入（接入真实识别服务时直接调用
-        `win._on_entry(plate, conf, kind)`），不传就现场调一次 service.recognize()。
-        """
         if plate is None:
             plate, conf, kind = self.service.recognize()
         self._pending_entry = (plate, kind)
@@ -423,6 +493,15 @@ class MainWindow(QMainWindow):
         self.scene.raise_gate("in")
 
     def _on_lower(self):
+        if self._persistent_mode and self._pending_exit and self.scene.has_open_gate():
+            record_id, plate = self._pending_exit
+            try:
+                self.service.mark_vehicle_passed(record_id)
+            except (ValueError, PermissionError) as exc:
+                toast(self, str(exc), "warn")
+                return
+            self._log(f"车辆通过 · {plate} · 出口落杆中")
+            self._refresh_table()
         self.scene.lower_current()
 
     def _on_open_changed(self, opened: bool):
@@ -434,12 +513,19 @@ class MainWindow(QMainWindow):
     def _on_gate_raised(self, gate: str):
         if gate == "in":
             if self._pending_entry:
-                plate, kind = self._pending_entry
-                self._pending_entry = None
-                self.service.add_entry(plate, kind)
+                if self._persistent_mode:
+                    _record_id, plate, _kind = self._pending_entry
+                else:
+                    plate, kind = self._pending_entry
+                    self._pending_entry = None
+                    self.service.add_entry(plate, kind)
                 self._refresh_table()
                 self.rec_hint.setText("闸杆已抬起，车辆入场")
                 self._log(f"入口抬杆 · {plate} 入场")
+        elif self._persistent_mode:
+            if self._pending_exit:
+                _record_id, plate = self._pending_exit
+                self._log(f"出口抬杆 · {plate} · 等待车辆通过")
         else:
             plate = self._pending_exit
             self._pending_exit = None
@@ -449,30 +535,104 @@ class MainWindow(QMainWindow):
                 self._log(f"出口抬杆 · {plate} 离场")
 
     def _on_gate_lowered(self, gate: str):
+        if self._persistent_mode and gate == "out" and self._pending_exit:
+            record_id, plate = self._pending_exit
+            try:
+                self.service.complete_exit(record_id)
+            except (ValueError, PermissionError) as exc:
+                toast(self, str(exc), "warn")
+                self._log(f"离场确认失败 · {plate} · {exc}")
+            else:
+                self._pending_exit = None
+                self._refresh_table()
+                self._log(f"离场完成 · {plate}")
+        if self._persistent_mode and gate == "in":
+            self._pending_entry = None
+        self.btn_entry.setEnabled(True)
+        self.btn_exit.setEnabled(True)
         self._log(f"{'入口' if gate == 'in' else '出口'}落杆 · 等待下一辆车")
 
     def _on_exit(self):
+        if self._persistent_mode and (
+            self.scene.has_open_gate() or self._pending_entry or self._pending_exit
+        ):
+            toast(self, "当前车道流程尚未结束，请先确认车辆通过并落杆", "warn")
+            return
         row = self.table.currentRow()
-        if row < 0:
-            row = 0
-        if self.table.rowCount() == 0:
+        if row >= 0:
+            plate = self.table.item(row, 0).text()
+        elif self._persistent_mode:
+            plate, ok = QInputDialog.getText(self, "按车牌出场", "请输入车牌号：")
+            if not ok or not plate.strip():
+                return
+        elif self.table.rowCount() > 0:
+            plate = self.table.item(0, 0).text()
+        else:
             toast(self, "当前没有在场车辆", "warn")
             return
-        plate = self.table.item(row, 0).text()
-        bill = self.service.bill(plate)
-        dlg = ExitDialog(bill, self)
-        dlg.paid.connect(lambda: self._after_pay(plate, bill))
-        dlg.released.connect(lambda reason: self._after_release(plate, reason))
-        dlg.finished.connect(lambda _r: self._refresh_table())
-        dlg.exec_()
+        try:
+            bill = self.service.bill(plate)
+        except (ValueError, PermissionError) as exc:
+            toast(self, str(exc), "warn")
+            self._log(f"出场查询失败 · {exc}")
+            return
+        if self._persistent_mode and bill.release_status in {"released", "passed"}:
+            self._begin_exit_release(bill)
+            return
+        dialog = ExitDialog(bill, self)
+        dialog.paid.connect(lambda: self._after_pay(plate, bill, dialog))
+        dialog.released.connect(
+            lambda reason: self._after_release(plate, reason, bill, dialog)
+        )
+        if self._persistent_mode:
+            dialog.authorize_requested.connect(
+                lambda user, password, reason: self._after_authorized_release(
+                    user, password, reason, bill, dialog
+                )
+            )
+        dialog.finished.connect(lambda _result: self._refresh_table())
+        dialog.exec_()
 
-    def _after_pay(self, plate: str, bill=None):
+    def _after_pay(self, plate: str, bill=None, dialog=None):
+        if self._persistent_mode:
+            try:
+                updated = self.service.pay(bill.record_id)
+            except (ValueError, PermissionError) as exc:
+                if dialog is not None:
+                    dialog.operation_failed(str(exc))
+                self._log(f"缴费失败 · {plate} · {exc}")
+                return
+            if dialog is not None:
+                dialog.mark_paid()
+            self._log(f"缴费 · {plate} {updated.total:.2f} 元")
+            try:
+                released = self.service.release(bill.record_id)
+            except (ValueError, PermissionError) as exc:
+                if dialog is not None:
+                    dialog.operation_failed(str(exc))
+                self._log(f"放行失败 · {plate} · 已缴费可重试（{exc}）")
+                return
+            if dialog is not None:
+                dialog.accept()
+            self._begin_exit_release(released)
+            return
         if bill is not None:
             self.service.pay(plate, bill.total)
             self.card_income.set_value(f"{self.service.stats()['today_income']:.2f}")
             self._log(f"缴费 · {plate} {bill.total:.2f} 元")
 
-    def _after_release(self, plate: str, reason: str):
+    def _after_release(self, plate: str, reason: str, bill=None, dialog=None):
+        if self._persistent_mode:
+            try:
+                released = self.service.release(bill.record_id)
+            except (ValueError, PermissionError) as exc:
+                if dialog is not None:
+                    dialog.operation_failed(str(exc))
+                return
+            if dialog is not None:
+                dialog.accept()
+            self._begin_exit_release(released)
+            return
         self._pending_exit = plate
         if reason:
             toast(self, f"{plate} 授权放行：{reason}", "warn")
@@ -480,4 +640,30 @@ class MainWindow(QMainWindow):
         else:
             toast(self, f"{plate} 已放行", "ok")
             self._log(f"放行 · {plate} 出口抬杆")
+        self.scene.raise_gate("out")
+
+    def _after_authorized_release(self, username, password, reason, bill, dialog):
+        if self.auth_service is None:
+            dialog.operation_failed("管理员验证服务不可用")
+            return
+        try:
+            admin = self.auth_service.authenticate(username, password)
+            released = self.service.authorize_release(bill.record_id, reason, admin)
+        except (ValueError, PermissionError) as exc:
+            dialog.operation_failed(str(exc))
+            self._log(f"授权放行失败 · {bill.plate} · {exc}")
+            return
+        dialog.accept()
+        toast(self, f"{bill.plate} 已由管理员授权放行", "warn")
+        self._log(f"授权放行 · {bill.plate}（{reason}）")
+        self._begin_exit_release(released)
+
+    def _begin_exit_release(self, bill):
+        if self.scene.has_open_gate():
+            toast(self, "当前已有闸杆抬起，请先完成该车道流程", "warn")
+            return
+        self._pending_exit = (bill.record_id, bill.plate)
+        self.btn_entry.setEnabled(False)
+        self.btn_exit.setEnabled(False)
+        self._refresh_table()
         self.scene.raise_gate("out")

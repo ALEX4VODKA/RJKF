@@ -206,6 +206,154 @@ class RecordRepository:
             ).fetchall()
         )
 
+    def get(self, record_id: int) -> sqlite3.Row | None:
+        return self.connection.execute(
+            "SELECT * FROM parking_record WHERE record_id = ?", (record_id,)
+        ).fetchone()
+
+    def prior_daily_usage(
+        self, plate_no: str, *, excluding_record_id: int
+    ) -> list[sqlite3.Row]:
+        return list(
+            self.connection.execute(
+                """
+                SELECT d.billing_date, d.charged_cents,
+                       r.rule_day_cap_cents, r.entry_time, r.record_id
+                FROM bill_daily_detail AS d
+                JOIN parking_record AS r ON r.record_id = d.record_id
+                WHERE r.plate_no = ? AND r.record_id <> ?
+                ORDER BY d.billing_date, r.entry_time, r.record_id
+                """,
+                (plate_no, excluding_record_id),
+            ).fetchall()
+        )
+
+    def daily_details(self, record_id: int) -> list[sqlite3.Row]:
+        return list(
+            self.connection.execute(
+                """
+                SELECT * FROM bill_daily_detail
+                WHERE record_id = ? ORDER BY billing_date
+                """,
+                (record_id,),
+            ).fetchall()
+        )
+
+    def freeze_bill(
+        self,
+        record_id: int,
+        *,
+        cutoff_at: datetime,
+        exit_photo: str | None,
+        duration_minutes: int,
+        fee_cents: int,
+        daily_details: list[dict],
+    ) -> bool:
+        cursor = self.connection.execute(
+            """
+            UPDATE parking_record
+            SET billing_cutoff_at = ?, exit_photo = ?, duration_minutes = ?,
+                fee_cents = ?, payment_status = 'unpaid',
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE record_id = ? AND payment_status = 'unbilled'
+            """,
+            (
+                _utc_text(cutoff_at),
+                exit_photo,
+                duration_minutes,
+                fee_cents,
+                record_id,
+            ),
+        )
+        if cursor.rowcount != 1:
+            return False
+        for item in daily_details:
+            self.connection.execute(
+                """
+                INSERT INTO bill_daily_detail (
+                    record_id, billing_date, period_start, period_end,
+                    duration_minutes, fee_before_cap_cents,
+                    prior_daily_fee_cents, charged_cents
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record_id,
+                    item["billing_date"],
+                    item["period_start"],
+                    item["period_end"],
+                    item["duration_minutes"],
+                    item["fee_before_cap_cents"],
+                    item["prior_daily_fee_cents"],
+                    item["charged_cents"],
+                ),
+            )
+        return True
+
+    def mark_paid(self, record_id: int, paid_at: datetime) -> bool:
+        cursor = self.connection.execute(
+            """
+            UPDATE parking_record
+            SET payment_status = 'paid', paid_cents = fee_cents,
+                paid_at = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE record_id = ? AND payment_status = 'unpaid'
+            """,
+            (_utc_text(paid_at), record_id),
+        )
+        return cursor.rowcount == 1
+
+    def mark_released(
+        self,
+        record_id: int,
+        *,
+        release_type: str,
+        released_at: datetime,
+        released_by: int | None = None,
+        reason: str | None = None,
+        authorized: bool = False,
+    ) -> bool:
+        payment_sql = ", payment_status = 'authorized', paid_cents = 0" if authorized else ""
+        cursor = self.connection.execute(
+            f"""
+            UPDATE parking_record
+            SET release_status = 'released', release_type = ?,
+                release_reason = ?, released_by = ?, released_at = ?
+                {payment_sql},
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE record_id = ? AND release_status = 'not_released'
+            """,
+            (
+                release_type,
+                reason,
+                released_by,
+                _utc_text(released_at),
+                record_id,
+            ),
+        )
+        return cursor.rowcount == 1
+
+    def mark_passed(self, record_id: int) -> bool:
+        cursor = self.connection.execute(
+            """
+            UPDATE parking_record
+            SET release_status = 'passed',
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE record_id = ? AND release_status = 'released'
+            """,
+            (record_id,),
+        )
+        return cursor.rowcount == 1
+
+    def complete_exit(self, record_id: int, exit_time: datetime) -> bool:
+        cursor = self.connection.execute(
+            """
+            UPDATE parking_record
+            SET exit_time = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE record_id = ? AND release_status = 'passed' AND exit_time IS NULL
+            """,
+            (_utc_text(exit_time), record_id),
+        )
+        return cursor.rowcount == 1
+
 
 class AdminRepository:
     def __init__(self, connection: sqlite3.Connection):
