@@ -39,6 +39,16 @@ def wait_ready(anim, timeout_ms=25000):
     return False
 
 
+def wait_until(predicate, timeout_ms=12000):
+    waited = 0
+    while waited < timeout_ms:
+        if predicate():
+            return True
+        spin(100)
+        waited += 100
+    return bool(predicate())
+
+
 def snapshot(anim, path):
     box = {}
 
@@ -89,14 +99,16 @@ def main():
         return 1
 
     win._on_entry()
-    spin(1600)
+    raised = wait_until(win.scene.has_open_gate)
     print("[state]", win.scene.pill_in.text(), "|", win.scene.state_label.text())
+    ok &= raised
     ok &= snapshot(anim, os.path.join(out, "webgl_in.png"))
-    spin(1800)
 
-    win._on_lower()
-    spin(900)
+    if raised:
+        win._on_lower()
+    lowered = raised and wait_until(lambda: not win.scene.has_open_gate())
     print("[state]", win.scene.pill_in.text(), "|", win.scene.state_label.text())
+    ok &= lowered
     ok &= snapshot(anim, os.path.join(out, "webgl_lower.png"))
 
     print("WEBGL", "PASS" if ok else "FAIL")

@@ -16,7 +16,7 @@
 | Phase 1 | 已完成 | SQLite 数据持久化、计费算法、收费规则管理、登录与权限 |
 | Phase 2 | 已完成 | 手工录入进出场、模拟缴费、放行控制、主界面与 3D 道闸动画联调 |
 | Phase 3 | 核心功能已完成 | 真实图片/视频车牌识别、后台线程、候选选择、失败后人工补录、抓拍路径入库 |
-| Phase 4 | 待开始 | 天/周/月/季/年统计、PDF 报表、模拟数据 |
+| Phase 4 | 实现完成待验收 | 天/ISO 周/月/季/年统计、中文 PDF 报表、可重复独立演示数据 |
 | Phase 5 | 待开始 | TC-01～TC-12、完整联调、部署与答辩交付 |
 
 Phase 3 当前支持：
@@ -91,6 +91,27 @@ python -m venv .venv
 2. 出场：选择图片或视频或人工输入车牌，查询在场记录并计算费用。
 3. 缴费：完成模拟缴费后才能放行；未缴费车辆不会被直接标记为离场。
 4. 离场：抬杆、确认车辆通过、落杆，随后可在记录查询中核对数据。
+5. 报表：管理员打开“统计报表”，选择包含起点、不包含终点的日期区间和统计维度，可查询并导出、打开或打印 PDF。
+
+## 生成独立演示数据
+
+在仓库根目录执行：
+
+```powershell
+.\.venv\Scripts\python.exe "Module A\parking_system\tools\generate_demo_data.py"
+```
+
+默认生成 `Module A/parking_system/runtime/demo/parking.sqlite3`，使用固定随机种子，包含 240 个车牌、1000 条已离场记录、五类计费场景各 200 条及 20 条以上异常车牌输入。重复运行会替换本工具管理的演示库而不会叠加；脚本始终拒绝覆盖实际业务数据库。演示登录账号为 `demo_admin`，密码为 `DemoPass123`，仅用于这个独立演示库。
+
+使用演示库启动时，在同一个 PowerShell 窗口执行：
+
+```powershell
+$env:PARKING_DATA_DIR = (Resolve-Path "Module A\parking_system\runtime\demo").Path
+.\.venv\Scripts\python.exe "Module A\parking_system\tools\setup_recognition.py"
+.\.venv\Scripts\python.exe "Module A\parking_system\app.py"
+```
+
+`setup_recognition.py` 会把识别模型准备到独立演示目录；不会读取或修改默认业务库。关闭该 PowerShell 窗口后，环境变量不会继续影响其他启动会话。
 
 ## 可选配置
 
@@ -120,7 +141,7 @@ Pop-Location
 .\.venv\Scripts\python.exe "Module A\parking_system\tools\selftest_anim.py"
 ```
 
-当前验证结果为 57 项 pytest 测试通过，业务闭环与动画自检通过。真实媒体样例已用于确认识别链路可运行，但尚未完成需求中的大样本准确率验收。
+当前验证结果为 93 项 pytest 测试通过，业务闭环与动画自检通过。Phase 4 另以默认规模生成 1000 条演示记录，并渲染检查 30 页中文 PDF 和空数据 PDF。真实媒体样例已用于确认识别链路可运行，但尚未完成需求中的大样本准确率验收。
 
 ## 数据与安全说明
 
@@ -134,6 +155,6 @@ Pop-Location
 - 当前只支持从本地图片或视频文件识别，尚未接入实时摄像头。
 - 尚未使用最终验收规模的数据集验证识别准确率，不能据现有样例宣称已达到 90%。
 - 真实停车场视频、1366×768 完整界面布局和全部人工操作路径仍需补充验收。
-- 统计报表、PDF 导出和 TC-01～TC-12 将在 Phase 4、Phase 5 完成。
+- PDF 的系统“打开”和“打印”按钮仍需在最终答辩电脑上用已安装的默认 PDF 阅读器手工验收；TC-01～TC-12 留待 Phase 5。
 
 第三方车牌识别方案：[HyperLPR](https://github.com/szad670401/HyperLPR)。
