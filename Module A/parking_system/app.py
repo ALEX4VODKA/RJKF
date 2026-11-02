@@ -21,6 +21,7 @@ from parking.data import Database
 from parking.recognition import LicenseRecognizer
 from parking.services.admin_service import AuthService
 from parking.services.parking_service import ParkingService
+from parking.services.report_service import ReportService
 from parking.services.rule_service import RuleService
 from parking.ui import theme as T
 from parking.ui.auth_dialog import AuthDialog
@@ -74,6 +75,7 @@ def main():
             threshold=float(os.environ.get("PARKING_RECOGNITION_THRESHOLD", "0.80")),
             max_attempts=int(os.environ.get("PARKING_RECOGNITION_ATTEMPTS", "3")),
         ),
+        report_service=ReportService(database),
     )
     win.setWindowIcon(_app_icon())
     win.show()

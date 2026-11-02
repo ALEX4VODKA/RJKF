@@ -17,6 +17,7 @@ from . import theme as T
 from .exit_dialog import ExitDialog
 from .entry_dialog import EntryDialog
 from .history_dialog import ParkingHistoryDialog
+from .report_dialog import ReportDialog
 from .rule_dialog import RuleManagerDialog
 from .scene_panel import ScenePanel
 from .widgets import (
@@ -91,6 +92,7 @@ class MainWindow(QMainWindow):
         user_session=None,
         auth_service=None,
         recognizer=None,
+        report_service=None,
     ):
         super().__init__()
         self.service = service
@@ -100,6 +102,7 @@ class MainWindow(QMainWindow):
         self.user_session = user_session
         self.auth_service = auth_service
         self.recognizer = recognizer
+        self.report_service = report_service
         self._persistent_mode = hasattr(service, "enter_vehicle")
         self._recognition_enabled = self._persistent_mode and recognizer is not None
         self._recognition_thread = None
@@ -204,6 +207,14 @@ class MainWindow(QMainWindow):
             self.btn_history.clicked.connect(self._open_history)
             h.addWidget(self.btn_history)
             h.addSpacing(4)
+        if self.report_service is not None:
+            self.btn_reports = QPushButton("统计报表")
+            self.btn_reports.setObjectName("ghost")
+            self.btn_reports.setFixedHeight(34)
+            self.btn_reports.setCursor(Qt.PointingHandCursor)
+            self.btn_reports.clicked.connect(self._open_reports)
+            h.addWidget(self.btn_reports)
+            h.addSpacing(4)
         self.clock = LiveClock()
         h.addWidget(self.clock)
         return bar
@@ -220,6 +231,15 @@ class MainWindow(QMainWindow):
             return
         try:
             ParkingHistoryDialog(self.service, self.user_session, self).exec_()
+        except (ValueError, PermissionError) as exc:
+            toast(self, str(exc), "warn")
+
+    def _open_reports(self):
+        if self.user_session is None or not self.user_session.is_admin:
+            toast(self, "统计报表仅管理员可查询", "warn")
+            return
+        try:
+            ReportDialog(self.report_service, self.user_session, self).exec_()
         except (ValueError, PermissionError) as exc:
             toast(self, str(exc), "warn")
 
