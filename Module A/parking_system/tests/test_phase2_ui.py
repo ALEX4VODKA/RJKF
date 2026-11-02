@@ -139,3 +139,31 @@ def test_scene_reload_retries_failed_gate_animation(qt_app, monkeypatch):
     assert panel.pill_in.text() == "入口 · 已抬起"
     assert panel._retry_operation is None
     panel.close()
+
+
+def test_scene_missing_animation_callback_times_out_to_retry(qt_app, monkeypatch):
+    class SilentAnimator(GateAnimator):
+        def __init__(self):
+            super().__init__()
+            self.widget = QWidget()
+
+        def surface(self):
+            return self.widget
+
+        def trigger(self, _gate, _direction):
+            pass
+
+    monkeypatch.setattr(
+        "parking.ui.scene_panel.create_animator", lambda *_args, **_kwargs: SilentAnimator()
+    )
+    panel = ScenePanel("unused", "auto")
+    panel.raise_gate("in")
+
+    assert panel._operation_timer.isActive()
+    panel._operation_timeout()
+
+    assert not panel._operation_timer.isActive()
+    assert panel.pill_in.text() == "入口 · 动画失败"
+    assert panel._retry_operation == ("in", RAISE)
+    assert "等待动画完成信号超时" in panel.state_label.text()
+    panel.close()

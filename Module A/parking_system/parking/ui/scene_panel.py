@@ -24,6 +24,7 @@ class ScenePanel(QFrame):
     raised = pyqtSignal(str)
     lowered = pyqtSignal(str)
     open_changed = pyqtSignal(bool)
+    OPERATION_TIMEOUT_MS = 12000
 
     def __init__(self, anim_dir: str, mode: str = "auto", parent=None):
         super().__init__(parent)
@@ -38,6 +39,9 @@ class ScenePanel(QFrame):
         self._fallback_timer = QTimer(self)
         self._fallback_timer.setSingleShot(True)
         self._fallback_timer.timeout.connect(self._fallback_done)
+        self._operation_timer = QTimer(self)
+        self._operation_timer.setSingleShot(True)
+        self._operation_timer.timeout.connect(self._operation_timeout)
 
         self._build()
         self._load()
@@ -131,6 +135,7 @@ class ScenePanel(QFrame):
             self._pending_direction = direction
             self._set_pill(gate, "重新加载中…", "info")
             self.state_label.setText("3D 场景重新加载中，稍后自动重试道闸动画…")
+            self._operation_timer.start(self.OPERATION_TIMEOUT_MS)
             self._animator.trigger(gate, direction)
         else:
             self.open_changed.emit(self._open_gate is not None)
@@ -146,6 +151,7 @@ class ScenePanel(QFrame):
         self._pending_direction = RAISE
         self._set_pill(gate, "抬杆中…", "warn")
         self.state_label.setText(f"{'入口' if gate == 'in' else '出口'}道闸抬杆中…")
+        self._operation_timer.start(self.OPERATION_TIMEOUT_MS)
 
         if self._animator is not None and hasattr(self._animator, "trigger"):
             try:
@@ -166,6 +172,7 @@ class ScenePanel(QFrame):
         self._set_pill(gate, "落杆中…", "warn")
         self.state_label.setText(f"{'入口' if gate == 'in' else '出口'}道闸落杆中…")
         self.open_changed.emit(False)      # 落杆过程中禁用按钮，避免重复点击
+        self._operation_timer.start(self.OPERATION_TIMEOUT_MS)
         if self._animator is not None and hasattr(self._animator, "trigger"):
             try:
                 self._animator.trigger(gate, "lower")
@@ -190,6 +197,7 @@ class ScenePanel(QFrame):
             self.state_label.setText(f"{name}道闸{verb}中…")
 
     def _on_finished(self, direction: str):
+        self._operation_timer.stop()
         self._retry_operation = None
         self.btn_reload.setToolTip("重新加载 3D 场景")
         gate = self._pending_gate or "in"
@@ -209,6 +217,7 @@ class ScenePanel(QFrame):
 
     def _on_anim_failed(self, message: str):
         """保留尚未完成的动作，允许用户刷新场景后安全重试。"""
+        self._operation_timer.stop()
         gate = self._pending_gate
         direction = self._pending_direction
         if gate and direction:
@@ -222,6 +231,10 @@ class ScenePanel(QFrame):
 
     def _fallback_done(self):
         self._on_finished(self._pending_direction or RAISE)
+
+    def _operation_timeout(self):
+        """动画实现漏发 finished/failed 时，结束无限等待并提供安全重试。"""
+        self._on_anim_failed("等待动画完成信号超时")
 
     def _set_pill(self, gate: str, text: str, kind: str):
         pill = self.pill_in if gate == "in" else self.pill_out

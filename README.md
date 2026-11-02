@@ -141,7 +141,7 @@ Pop-Location
 .\.venv\Scripts\python.exe "Module A\parking_system\tools\selftest_anim.py"
 ```
 
-当前验证结果为 92 项 pytest 测试通过，业务闭环与动画自检通过。Phase 4 另以默认规模生成 1000 条演示记录，并渲染检查 30 页中文 PDF 和空数据 PDF。真实媒体样例已用于确认识别链路可运行，但尚未完成需求中的大样本准确率验收。
+当前验证结果为 93 项 pytest 测试通过，业务闭环与动画自检通过。Phase 4 另以默认规模生成 1000 条演示记录，并渲染检查 30 页中文 PDF 和空数据 PDF。真实媒体样例已用于确认识别链路可运行，但尚未完成需求中的大样本准确率验收。
 
 ## 数据与安全说明
 

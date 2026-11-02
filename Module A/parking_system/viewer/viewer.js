@@ -410,9 +410,10 @@
       var act = actions[key];
       act.reset();
       act.setEffectiveWeight(1);
-      // 导出时往往按整条时间轴（比如 10 秒）出动画，这里按动作时长压缩到 1.8 秒
+      // 导出时往往按整条时间轴出动画。不要限制最大倍速，否则长时间轴
+      // 在低帧率设备上会被拖成数十秒，Python 端会一直等待完成回调。
       var dur = act.getClip().duration || CFG.actionSeconds;
-      act.timeScale = Math.min(8, Math.max(0.2, dur / CFG.actionSeconds));
+      act.timeScale = Math.max(0.2, dur / CFG.actionSeconds);
       act.play();
 
       // 兜底：个别情况下 mixer 的 finished 不触发，用定时器补一次
@@ -451,7 +452,9 @@
   // ------------------------------------------------------------ 主循环
   function animate() {
     requestAnimationFrame(animate);
-    var dt = Math.min(clock.getDelta(), 0.05);
+    // 允许低帧率时按真实经过时间推进。50 ms 上限会让 10 FPS 以下的
+    // 动画按帧数而非墙钟时间播放，界面长时间停在“抬杆中”。
+    var dt = Math.min(clock.getDelta(), 0.25);
     updateTween(dt);
     if (mixer) mixer.update(dt);
     updateDemoAnim(dt);
