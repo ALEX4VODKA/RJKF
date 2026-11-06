@@ -108,6 +108,60 @@ def test_video_input_reads_real_frames_and_returns_frame_index(tmp_path):
     assert Path(result.photo_path).is_file()
 
 
+def test_video_frame_selection_spans_timeline_and_prefers_clear_frames(
+    tmp_path, monkeypatch
+):
+    class FakeCapture:
+        def __init__(self, frames):
+            self.frames = frames
+            self.position = 0
+
+        def isOpened(self):
+            return True
+
+        def get(self, prop):
+            if prop == cv2.CAP_PROP_FRAME_COUNT:
+                return len(self.frames)
+            return 0
+
+        def set(self, prop, value):
+            if prop == cv2.CAP_PROP_POS_FRAMES:
+                self.position = int(value)
+                return True
+            return False
+
+        def read(self):
+            if not 0 <= self.position < len(self.frames):
+                return False, None
+            frame = self.frames[self.position].copy()
+            self.position += 1
+            return True, frame
+
+        def release(self):
+            pass
+
+    frames = [np.full((96, 160, 3), 128, dtype=np.uint8) for _ in range(90)]
+    checkerboard = (np.indices((96, 160)).sum(axis=0) % 2 * 255).astype(np.uint8)
+    sharp_frame = np.repeat(checkerboard[:, :, None], 3, axis=2)
+    expected = [25, 50, 76]
+    for position in expected:
+        frames[position] = sharp_frame
+
+    monkeypatch.setattr(
+        "parking.recognition.service.cv2.VideoCapture",
+        lambda _path: FakeCapture(frames),
+    )
+    recognizer = LicenseRecognizer(
+        tmp_path / "runtime",
+        backend=FakeBackend([[('陕A12345', 0.95, 0, [1, 2, 3, 4])]]),
+    )
+
+    attempts = list(recognizer._video_attempts(tmp_path / "sample.mp4"))
+
+    assert [position for position, _inference, _capture in attempts] == expected
+    assert len(attempts) == recognizer.max_attempts
+
+
 def test_unsupported_media_fails_explicitly(tmp_path):
     source = tmp_path / "plate.txt"
     source.write_text("not an image", encoding="utf-8")

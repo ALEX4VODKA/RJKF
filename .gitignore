@@ -20,3 +20,6 @@ Module A/parking_system/runtime/
 
 # 成员 A 的重复交付压缩包；保留解压后的实际项目目录。
 Module A/parking_system.zip
+
+# 本地验收素材可能包含大文件与真实车牌，不进入版本库。
+/res/
