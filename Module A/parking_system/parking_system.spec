@@ -61,5 +61,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name="智慧停车收费系统",
+    name="ParkingSystem",
 )

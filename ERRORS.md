@@ -14,6 +14,9 @@
 | [ERR-008](#err-008) | 视频固定三点抽帧遗漏清晰车牌窗口 | 已解决 | Phase 5 |
 | [ERR-009](#err-009) | Hugging Face 大文件传输中途 EOF | 已解决（本次素材下载） | Phase 5 / 素材准备 |
 | [ERR-010](#err-010) | 黄牌批处理触发 NumPy 空切片运行时警告 | 待复现 | Phase 5 / 图片基准 |
+| [ERR-011](#err-011) | PyInstaller 冻结版 ONNX 加载顺序与资源遗漏 | 已解决 | Phase 5 / 部署 |
+| [ERR-012](#err-012) | 短密码登录失败仅显示行内文字 | 已解决 | Phase 5 / 桌面验收 |
+| [ERR-013](#err-013) | 冻结版从中文程序目录启动时登录后原生退出 | 已解决（本机） | Phase 5 / 部署 |
 
 - 同一问题更新原编号，编号不回收。状态使用：待复现／排查中／已缓解／已解决／已失效。
 - 区分用户引用、历史任务结果、本次代码检查、本次运行验证。缺失原始日志时写明缺失，不补造堆栈、退出码或实验命令。
@@ -158,3 +161,12 @@
 - **根因**：`AuthService._validate_credentials()` 与 `change_password()` 强制至少 8 个字符；`AuthDialog._submit()` 捕获错误后仅调用 `QLabel.setText()`，没有模态提示。按钮连接本身正常，不是信号未绑定或数据库事务挂起。
 - **解决位置与方法**：按用户明确的纯测试用途，`parking/services/admin_service.py` 取消首次管理员、后续账号创建和改密的密码长度/字符限制，允许空密码并继续使用 PBKDF2 加盐存储；用户名规则保持不变。`parking/ui/auth_dialog.py` 更新占位提示，创建或登录失败时同时保留行内文字并显示 `QMessageBox.warning`。
 - **验证与风险**：聚焦认证/UI 测试 18 passed in 1.35s，全量 101 passed in 5.76s；自动覆盖空密码创建和登录、单字符密码登录、中文/空格/符号密码、改密及错误密码弹窗。重建包安装自检和 GUI 冷启动通过。允许空密码会显著降低安全性，只适用于当前课程本地测试程序；若转为真实部署，应恢复密码策略。
+
+<a id="err-013"></a>
+## ERR-013：冻结版从中文程序目录启动时登录后 QtWebEngine 原生退出
+
+- **阶段、日期、状态**：Phase 5 部署；2026-11-09；已解决（本机构建机）。
+- **环境与现象**：Windows 11 24H2、PyInstaller 6.22.3、PyQt5 5.15.11、PyQtWebEngine 5.15.7。冻结版在 `…\智慧停车收费系统\智慧停车收费系统.exe` 中输入 `admin / 1` 后，认证窗口关闭但主窗口不出现。SQLite 操作日志连续记录 `login.success`，运行目录没有 Python `startup-error.log`。
+- **证据与根因**：Windows Application Error 事件 1000 连续三次指向 `Qt5Core.dll` 5.15.2.0，异常代码 `0xc0000409`、偏移 `0x204e8`；进程退出码为 `-1073740791`。同一 EXE 使用 `ANIM_MODE=placeholder` 时主窗口正常，确认崩溃发生在 QtWebEngine 3D 初始化。软件 OpenGL、英文 EXE 文件名、外置数据目录均不能消除故障；旧 `console=False` EXE 不改代码，仅将完整程序复制到纯英文 `ParkingSystem\` 目录后，自动输入同一账号可稳定显示“智慧停车 · 出入口控制台”。反向把已通过的候选 EXE 放回中文应用目录又复现同一退出码。因此本环境的直接触发条件是冻结版 QtWebEngine 从中文应用目录初始化，而不是认证、SQLite、密码或 EXE 显示名称。
+- **解决位置与方法**：`parking_system.spec` 的 `COLLECT` 输出目录改为 ASCII `ParkingSystem`；`tools/build_windows.py` 将内部程序目录名与中文 ZIP 展示名分离。ZIP 仍使用中文名称，界面及 EXE 文件名不变，完整解压后实际运行路径为 `ParkingSystem\智慧停车收费系统.exe`。新增 `tests/test_package_spec.py` 防止打包目录回退为中文。
+- **验证与边界**：正式构建目录中自动登录 `admin / 1` 后进程持续运行并显示“智慧停车 · 出入口控制台”；一键演示模式使用 `test / 1` 后进程同样持续运行。安装自检退出码 0，报告 `webengine=true`、`recognition_model=ready`。正式 ZIP 根目录只有 `ParkingSystem`，包含离线模型和演示模板，不含测试数据库、缓存或日志；317107252 字节，SHA-256 为 `B443C64788C455A19D2B9E71D0D4A678F314A09A3624D786054BD11C9531D449`。本次只在构建机验证，第二台 Windows 仍需回归；不能把该约束推广为所有 QtWebEngine 版本的普遍问题。

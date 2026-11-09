@@ -13,9 +13,10 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 DIST_DIR = PROJECT_DIR / "dist"
-APP_NAME = "智慧停车收费系统"
-APP_DIR = DIST_DIR / APP_NAME
-ZIP_PATH = DIST_DIR / f"{APP_NAME}_Windows_x64.zip"
+APP_DIR_NAME = "ParkingSystem"
+ARCHIVE_NAME = "智慧停车收费系统"
+APP_DIR = DIST_DIR / APP_DIR_NAME
+ZIP_PATH = DIST_DIR / f"{ARCHIVE_NAME}_Windows_x64.zip"
 MODEL_SOURCE = PROJECT_DIR / "runtime" / ".hyperlpr3"
 MODEL_DESTINATION = APP_DIR / "runtime" / ".hyperlpr3"
 DEMO_TEMPLATE = APP_DIR / "demo-template" / "parking.sqlite3"
@@ -74,7 +75,7 @@ def main() -> int:
         str(ZIP_PATH.with_suffix("")),
         "zip",
         root_dir=DIST_DIR,
-        base_dir=APP_NAME,
+        base_dir=APP_DIR_NAME,
     )
     print(f"程序目录：{APP_DIR}")
     print(f"交付压缩包：{ZIP_PATH}")
