@@ -9,6 +9,7 @@ from PyQt5.QtWidgets import (
     QFormLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QVBoxLayout,
 )
 
@@ -50,7 +51,7 @@ class AuthDialog(QDialog):
         self.username.setPlaceholderText("3～50 个字符，不含空格")
         self.password = QLineEdit()
         self.password.setEchoMode(QLineEdit.Password)
-        self.password.setPlaceholderText("至少 8 个字符")
+        self.password.setPlaceholderText("测试用途：可留空，不限制字符")
         form.addRow("用户名", self.username)
         form.addRow("密码", self.password)
         self.confirm = None
@@ -79,8 +80,9 @@ class AuthDialog(QDialog):
             self.confirm.returnPressed.connect(self._submit)
 
     def _submit(self) -> None:
+        self.error.clear()
         if self.confirm is not None and self.password.text() != self.confirm.text():
-            self.error.setText("两次输入的密码不一致")
+            self._show_error("两次输入的密码不一致")
             return
         try:
             if self.bootstrap:
@@ -92,6 +94,11 @@ class AuthDialog(QDialog):
                     self.username.text(), self.password.text()
                 )
         except (AuthenticationError, ValueError) as exc:
-            self.error.setText(str(exc))
+            self._show_error(str(exc))
             return
         self.accept()
+
+    def _show_error(self, message: str) -> None:
+        self.error.setText(message)
+        title = "创建失败" if self.bootstrap else "登录失败"
+        QMessageBox.warning(self, title, message)

@@ -11,6 +11,9 @@
 | [ERR-005](#err-005) | 工具输出截断导致证据不完整 | 已解决（当次读取） | Phase 0 / 通用操作 |
 | [ERR-006](#err-006) | Windows 沙箱进程／临时目录权限 | 已缓解 | Phase 1 |
 | [ERR-007](#err-007) | 真实识别后 3D 抬杆长时间锁住车道 | 已解决 | Phase 3 / 4 联调 |
+| [ERR-008](#err-008) | 视频固定三点抽帧遗漏清晰车牌窗口 | 已解决 | Phase 5 |
+| [ERR-009](#err-009) | Hugging Face 大文件传输中途 EOF | 已解决（本次素材下载） | Phase 5 / 素材准备 |
+| [ERR-010](#err-010) | 黄牌批处理触发 NumPy 空切片运行时警告 | 待复现 | Phase 5 / 图片基准 |
 
 - 同一问题更新原编号，编号不回收。状态使用：待复现／排查中／已缓解／已解决／已失效。
 - 区分用户引用、历史任务结果、本次代码检查、本次运行验证。缺失原始日志时写明缺失，不补造堆栈、退出码或实验命令。
@@ -116,3 +119,42 @@
 - **解决位置与方法**：`parking/recognition/service.py` 先把视频按时间分为前、中、后三段，每段均匀读取五个低成本候选，以降采样灰度图的拉普拉斯方差、曝光和对比度综合评分选择一帧，再交给 HyperLPR；保持最多三次实际模型推理，不使用数据集标注参与选帧，也没有为单个样本硬编码帧号。`tests/test_recognition.py` 使用可控候选帧验证时间覆盖和清晰帧优先。
 - **验证与边界**：三段 LSV-LP 视频优化后全部自动识别，并逐段与所选帧官方 JSON 标注精确一致；置信度分别为 0.9988、0.9998、0.9999，耗时分别为 3133 ms、1665 ms、4504 ms。聚焦测试 6 passed in 0.16s，全量 94 passed in 5.00s，均使用项目 `.venv` 在沙箱外运行；沙箱内首次聚焦测试仅因 ERR-006 的临时目录 ACL 在 setup 阶段失败，未执行断言。当前只验证三段样本，仍需用最终五段视频确认泛化；画面质量评分不等同车牌检测，不能保证任意视频必然命中。
 - **沉淀**：仅记录在本项目 ERRORS/PROGRESS；尚未形成跨项目通用规则。
+
+<a id="err-009"></a>
+## ERR-009：Hugging Face 大文件传输中途 EOF
+
+- **阶段、日期、状态**：Phase 5 素材准备；2026-11-06；本次素材下载已解决。
+- **环境**：Windows、PowerShell 7.6.5、Python 3.12.8 `requests` 2.34.2；Hugging Face `resolve` 地址重定向至 Xet/AWS CDN；目标文件为约 908 MB 的 CCPD2020 ZIP 和约 1.6 GB 的 CRPD WebDataset TAR。
+- **触发与影响**：Python 流式读取 CRPD TAR 在 CDN 重定向后报 `SSL: UNEXPECTED_EOF_WHILE_READING`；PowerShell 单连接下载 CCPD2020 ZIP 也报 `Received an unexpected EOF or 0 bytes from the transport stream`，目标 ZIP 未生成。小型 API/JSON 请求及 1 MB HTTP Range 请求可成功，说明不是数据集入口整体不可达。
+- **处理**：CCPD2020 改为 64 MB HTTP Range 分块，每块校验期望长度并最多重试四次，全部分块完成后按顺序合并；CRPD 只下载归档前 400 MB 范围，结合已取得的人工标注，从该范围内 97 个不同黄牌标签中筛选并提取 20 张，不下载完整 TAR。未关闭 TLS 校验，未把失败片段当作成功文件。
+- **验证与边界**：CCPD2020 合并文件长度为 907711344 字节，`zipfile.ZipFile.testzip()` 返回 `None`，归档包含 11776 个文件；20 张绿牌已从该 ZIP 提取。CRPD 范围片段可顺序读取 657 个 TAR 成员，其中 99 个黄牌标注、97 个不同文本，最终提取 20 张并人工查看。该处理只证明当前公开素材下载完成，不代表 Hugging Face/CDN 的底层连接问题永久消失。
+- **沉淀**：保留在本项目 ERRORS；下载脚本和分块缓存位于被 Git 忽略的 `res/phase5_images/_sources/`。这是一次数据源与网络组合问题，未修改全局 `windows-local-ops` Skill。
+
+<a id="err-010"></a>
+## ERR-010：黄牌批处理触发 NumPy 空切片运行时警告
+
+- **阶段、日期、状态**：Phase 5 图片基准；2026-11-06；待复现。
+- **环境**：Windows 11、Python 3.12.8、HyperLPR3 0.1.3、ONNX Runtime 1.26.0、NumPy 2.5.4、OpenCV 4.14.0.94；固定 100 张混合鲁棒性图片。
+- **触发与影响**：两次沙箱外真实批处理均在进度 90/100 至 100/100 之间输出 `RuntimeWarning: Mean of empty slice` 与 `invalid value encountered in scalar divide`，来源栈停在 NumPy `fromnumeric.py` / `_methods.py`。两次运行都继续完成 100 张并写出完整 CSV/JSON；当前未确认警告对应的具体图片、HyperLPR 内部调用点或是否改变该张候选排序。
+- **已确认与边界**：警告在相同黄牌尾段重复出现，因此不是一次性工具截断；验收工具自身未调用 NumPy `mean`，但尚无逐张警告捕获证据，不能据此把根因直接写成 HyperLPR 缺陷。准确率 77/100 的结论不依赖该警告是否存在，因其他失败样本已有明确整牌不一致结果。
+- **下一步**：只重放黄牌 91～100，并把运行时警告逐张捕获为诊断记录，定位具体样本和调用栈；不得通过全局忽略 NumPy 警告掩盖问题。
+
+<a id="err-011"></a>
+## ERR-011：PyInstaller 冻结版 ONNX 加载顺序与非 Python 资源遗漏
+
+- **阶段、日期、状态**：Phase 5 部署；2026-11-09；已解决（本机 Windows 11 x64）。
+- **环境**：Windows 11、Python 3.12.8、PyInstaller 6.22.3、PyQt5 5.15.11、PyQtWebEngine 5.15.7、ONNX Runtime 1.26.0、HyperLPR3 0.1.3；构建形态为 `onedir`。
+- **触发与影响**：首个便携包包含 ONNX DLL、QtWebEngine 和模型文件，但启动 `--verify-installation` 时 `onnxruntime_pybind11_state` 报 DLL 初始化失败；保留源码入口“先 ONNX、后 PyQt”仍不足，因为 PyInstaller 的 `pyi_rth_pyqt5` 在 `app.py` 前执行。修复后安装自检通过，但普通 GUI 首次冷启动又在数据库初始化时报包内缺少 `parking/data/schema.sql`，导致程序在登录界面前退出。
+- **证据与排除**：源码环境的锁定组合此前可运行；首包逐项确认 `onnxruntime.dll`、pybind pyd、QtWebEngineProcess、3D 场景和四个模型文件存在，因此不是单纯漏复制 ONNX 文件。构建日志确认自定义钩子排在 `pyi_rth_pyqt5` 之前；加入后安装自检可以继续执行并真实加载识别模型。普通启动新增的 `runtime/startup-error.log` 给出 `Database.initialize()` 读取 `_internal/parking/data/schema.sql` 的明确 FileNotFoundError，排除登录逻辑或 SQLite 写权限为当次根因。
+- **解决位置与方法**：`tools/pyi_rth_onnxruntime_first.py` 在 Qt 运行时钩子之前导入 ONNX；`parking_system.spec` 显式收集 `schema.sql`、viewer 和 resources，并排除 Torch/Matplotlib/pytest 等非运行依赖；`app.py` 区分 `_internal` 只读资源目录与 exe 同级可写目录，将数据库、抓拍和 WebEngine 缓存定向 `runtime/`，提供 `--verify-installation` 与窗口版启动错误日志；`tools/build_windows.py` 复制本地模型并生成 ZIP 和哈希。
+- **验证与边界**：最终包安装自检退出码 0，报告 QtWebEngine 与离线识别模型 ready；普通 GUI 隐藏冷启动 8 秒仍驻留，SQLite 已创建且无启动错误日志。认证修复后的最终 ZIP `testzip()` 无坏项、316857577 字节，SHA-256 为 `bfe858f99bb874cd7a080dcaedd6ad4fca000f4452f581cd23868dc5cbddb33d`；全量 pytest 101 passed in 5.76s。当前仅在构建机 Windows 11 x64 验证，第二台 Windows 10/11 目标机仍需最终部署验收。
+- **沉淀**：该顺序是本项目当前 PyQt5/ONNX 组合的已验证约束，与 ERR-003 一致；不推广为所有 PyInstaller/Qt/ONNX 版本的通用结论。
+
+<a id="err-012"></a>
+## ERR-012：短密码创建/登录失败仅显示行内文字，用户感知为无响应
+
+- **阶段、日期、状态**：Phase 5 桌面验收；2026-11-09；已解决。
+- **现象与影响**：用户在打包程序点击登录后看不到后续窗口，也没有弹窗。认证对话框原实现会把 `AuthenticationError` 只写到窗口底部的红色标签；首次创建使用少于 8 个字符的密码时，服务层立即拒绝，但按钮、窗口和焦点均无明显变化，因此容易被理解为按钮失效。
+- **根因**：`AuthService._validate_credentials()` 与 `change_password()` 强制至少 8 个字符；`AuthDialog._submit()` 捕获错误后仅调用 `QLabel.setText()`，没有模态提示。按钮连接本身正常，不是信号未绑定或数据库事务挂起。
+- **解决位置与方法**：按用户明确的纯测试用途，`parking/services/admin_service.py` 取消首次管理员、后续账号创建和改密的密码长度/字符限制，允许空密码并继续使用 PBKDF2 加盐存储；用户名规则保持不变。`parking/ui/auth_dialog.py` 更新占位提示，创建或登录失败时同时保留行内文字并显示 `QMessageBox.warning`。
+- **验证与风险**：聚焦认证/UI 测试 18 passed in 1.35s，全量 101 passed in 5.76s；自动覆盖空密码创建和登录、单字符密码登录、中文/空格/符号密码、改密及错误密码弹窗。重建包安装自检和 GUI 冷启动通过。允许空密码会显著降低安全性，只适用于当前课程本地测试程序；若转为真实部署，应恢复密码策略。

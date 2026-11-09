@@ -87,14 +87,19 @@ class HyperLprBackend:
     """隔离 HyperLPR3 的路径缺陷与第三方返回格式。"""
 
     def __init__(self, data_root: Path):
-        self.model_home = data_root / ".hyperlpr3"
+        configured_model_home = os.environ.get("PARKING_RECOGNITION_MODEL_DIR")
+        self.model_home = (
+            Path(configured_model_home).expanduser().resolve()
+            if configured_model_home
+            else data_root / ".hyperlpr3"
+        )
         # Windows 下 HyperLPR3 先加载自身推理模块、再延迟导入 ONNX Runtime
         # 会触发原生 DLL 初始化冲突；提前加载可让其后续导入复用同一模块。
         try:
             import onnxruntime  # noqa: F401
         except Exception as exc:
             raise RecognitionError(f"ONNX Runtime 加载失败：{exc}") from exc
-        lpr3 = self._import_hyperlpr(data_root)
+        lpr3 = self._import_hyperlpr(self.model_home.parent)
         try:
             self._catcher = lpr3.LicensePlateCatcher(
                 folder=str(self.model_home),

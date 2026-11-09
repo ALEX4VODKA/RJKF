@@ -16,6 +16,7 @@ from . import icons
 from . import theme as T
 from .exit_dialog import ExitDialog
 from .entry_dialog import EntryDialog
+from .defense_demo_dialog import DefenseDemoDialog
 from .history_dialog import ParkingHistoryDialog
 from .report_dialog import ReportDialog
 from .rule_dialog import RuleManagerDialog
@@ -93,6 +94,7 @@ class MainWindow(QMainWindow):
         auth_service=None,
         recognizer=None,
         report_service=None,
+        defense_mode: bool = False,
     ):
         super().__init__()
         self.service = service
@@ -103,6 +105,7 @@ class MainWindow(QMainWindow):
         self.auth_service = auth_service
         self.recognizer = recognizer
         self.report_service = report_service
+        self.defense_mode = defense_mode
         self._persistent_mode = hasattr(service, "enter_vehicle")
         self._recognition_enabled = self._persistent_mode and recognizer is not None
         self._recognition_thread = None
@@ -215,6 +218,14 @@ class MainWindow(QMainWindow):
             self.btn_reports.clicked.connect(self._open_reports)
             h.addWidget(self.btn_reports)
             h.addSpacing(4)
+        if self.defense_mode:
+            self.btn_defense = QPushButton("演示指引")
+            self.btn_defense.setObjectName("ghost")
+            self.btn_defense.setFixedHeight(34)
+            self.btn_defense.setCursor(Qt.PointingHandCursor)
+            self.btn_defense.clicked.connect(self._open_defense_guide)
+            h.addWidget(self.btn_defense)
+            h.addSpacing(4)
         self.clock = LiveClock()
         h.addWidget(self.clock)
         return bar
@@ -242,6 +253,13 @@ class MainWindow(QMainWindow):
             ReportDialog(self.report_service, self.user_session, self).exec_()
         except (ValueError, PermissionError) as exc:
             toast(self, str(exc), "warn")
+
+    def _open_defense_guide(self):
+        if not hasattr(self, "_defense_guide") or self._defense_guide is None:
+            self._defense_guide = DefenseDemoDialog(self)
+        self._defense_guide.show()
+        self._defense_guide.raise_()
+        self._defense_guide.activateWindow()
 
     # ---------------- 左：人工操作
     def _build_left(self) -> QWidget:

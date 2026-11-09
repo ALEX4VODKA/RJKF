@@ -114,7 +114,7 @@ def _profile(app_root: str):
 
     from PyQt5.QtWidgets import QApplication
     profile = QWebEngineProfile("parking-viewer", QApplication.instance())
-    base = os.path.join(app_root, ".webengine")
+    base = os.environ.get("PARKING_WEBENGINE_DIR") or os.path.join(app_root, ".webengine")
     os.makedirs(base, exist_ok=True)
     profile.setCachePath(os.path.join(base, "cache"))
     profile.setPersistentStoragePath(os.path.join(base, "data"))
