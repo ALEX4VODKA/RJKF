@@ -46,6 +46,18 @@ def test_bootstrap_hashes_password_and_login_succeeds(database):
     assert logged_in == session
 
 
+def test_password_creation_and_change_have_no_content_restrictions(database):
+    auth = AuthService(database)
+    admin = auth.bootstrap_admin("admin", "")
+    assert auth.authenticate("admin", "") == admin
+
+    operator = auth.create_account(admin, "operator", "短 密码🔒!", "operator")
+    assert auth.authenticate("operator", "短 密码🔒!") == operator
+
+    auth.change_password(admin, "", "x")
+    assert auth.authenticate("admin", "x") == admin
+
+
 def test_five_failures_lock_account_for_five_minutes(database):
     auth = AuthService(database)
     auth.bootstrap_admin("admin", "StrongPass123")

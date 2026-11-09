@@ -1,6 +1,15 @@
 from pathlib import Path
 
-from parking.config import RuntimePaths
+import parking.config as config
+from parking.config import RuntimePaths, application_directory
+
+
+def test_frozen_application_dir_uses_executable_parent(monkeypatch, tmp_path):
+    executable = tmp_path / "智慧停车收费系统.exe"
+    monkeypatch.setattr(config.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(config.sys, "executable", str(executable))
+
+    assert application_directory(tmp_path / "_internal") == tmp_path
 
 
 def test_runtime_path_can_be_isolated_with_environment(monkeypatch, tmp_path):

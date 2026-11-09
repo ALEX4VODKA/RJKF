@@ -124,6 +124,8 @@ def generate_demo_database(
     start_date: date = DEFAULT_START_DATE,
     plate_count: int = 240,
     record_count: int = 1000,
+    admin_username: str = "demo_admin",
+    admin_password: str = "DemoPass123",
     force: bool = False,
 ) -> DemoDataSummary:
     if plate_count < 1:
@@ -153,7 +155,7 @@ def generate_demo_database(
         database = Database(temporary)
         database.initialize()
         auth = AuthService(database)
-        admin = auth.bootstrap_admin("demo_admin", "DemoPass123")
+        admin = auth.bootstrap_admin(admin_username, admin_password)
         service = ParkingService(database, admin, local_timezone=CN_TZ)
         with database.transaction() as connection:
             connection.execute(

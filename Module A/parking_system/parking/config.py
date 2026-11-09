@@ -7,8 +7,16 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+
+def application_directory(resource_dir: Path) -> Path:
+    """返回可写程序目录；冻结后使用 exe 的父目录。"""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return resource_dir.resolve()
 
 
 @dataclass(frozen=True)

@@ -87,14 +87,19 @@ class HyperLprBackend:
     """隔离 HyperLPR3 的路径缺陷与第三方返回格式。"""
 
     def __init__(self, data_root: Path):
-        self.model_home = data_root / ".hyperlpr3"
+        configured_model_home = os.environ.get("PARKING_RECOGNITION_MODEL_DIR")
+        self.model_home = (
+            Path(configured_model_home).expanduser().resolve()
+            if configured_model_home
+            else data_root / ".hyperlpr3"
+        )
         # Windows 下 HyperLPR3 先加载自身推理模块、再延迟导入 ONNX Runtime
         # 会触发原生 DLL 初始化冲突；提前加载可让其后续导入复用同一模块。
         try:
             import onnxruntime  # noqa: F401
         except Exception as exc:
             raise RecognitionError(f"ONNX Runtime 加载失败：{exc}") from exc
-        lpr3 = self._import_hyperlpr(data_root)
+        lpr3 = self._import_hyperlpr(self.model_home.parent)
         try:
             self._catcher = lpr3.LicensePlateCatcher(
                 folder=str(self.model_home),
@@ -315,10 +320,21 @@ class LicenseRecognizer:
         try:
             frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
             if frame_count > 0:
-                positions = np.linspace(
-                    0, max(0, frame_count - 1), self.max_attempts + 2, dtype=int
-                )[1:-1]
-                positions = list(dict.fromkeys(int(value) for value in positions))
+                # 每个时间段先评估五个低成本候选；模型推理仍受
+                # max_attempts 限制，不因视频时长增加而无限扫描。
+                candidate_count = min(frame_count, self.max_attempts * 5)
+                candidate_positions = np.linspace(
+                    0, max(0, frame_count - 1), candidate_count, dtype=int
+                )
+                candidates: list[tuple[int, float]] = []
+                for position in dict.fromkeys(
+                    int(value) for value in candidate_positions
+                ):
+                    capture.set(cv2.CAP_PROP_POS_FRAMES, position)
+                    ok, frame = capture.read()
+                    if ok and frame is not None:
+                        candidates.append((position, self._video_frame_quality(frame)))
+                positions = self._select_video_positions(candidates, frame_count)
             else:
                 positions = list(range(self.max_attempts))
             emitted = 0
@@ -336,6 +352,67 @@ class LicenseRecognizer:
                 raise RecognitionError("视频中没有可读取的画面")
         finally:
             capture.release()
+
+    def _select_video_positions(
+        self,
+        candidates: Sequence[tuple[int, float]],
+        frame_count: int,
+    ) -> list[int]:
+        """在整段视频保持时间覆盖，并从每段选择质量最高的候选帧。"""
+        if not candidates or frame_count <= 0:
+            return []
+        selected: list[tuple[int, float]] = []
+        used: set[int] = set()
+        for segment in range(self.max_attempts):
+            segment_candidates = [
+                item
+                for item in candidates
+                if min(
+                    self.max_attempts - 1,
+                    item[0] * self.max_attempts // frame_count,
+                )
+                == segment
+            ]
+            if not segment_candidates:
+                continue
+            center = (segment + 0.5) * frame_count / self.max_attempts
+            best = max(
+                segment_candidates,
+                key=lambda item: (item[1], -abs(item[0] - center)),
+            )
+            selected.append(best)
+            used.add(best[0])
+
+        if len(selected) < self.max_attempts:
+            remaining = sorted(
+                (item for item in candidates if item[0] not in used),
+                key=lambda item: item[1],
+                reverse=True,
+            )
+            selected.extend(remaining[: self.max_attempts - len(selected)])
+        return sorted(position for position, _score in selected)
+
+    @staticmethod
+    def _video_frame_quality(frame: np.ndarray) -> float:
+        """用低分辨率清晰度、曝光和对比度为候选帧打分。"""
+        height, width = frame.shape[:2]
+        longest_side = max(height, width)
+        if longest_side > 640:
+            scale = 640.0 / longest_side
+            frame = cv2.resize(
+                frame,
+                None,
+                fx=scale,
+                fy=scale,
+                interpolation=cv2.INTER_AREA,
+            )
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+        brightness = float(gray.mean())
+        contrast = float(gray.std())
+        exposure = max(0.2, 1.0 - abs(brightness - 127.5) / 127.5)
+        contrast_factor = 0.5 + min(contrast, 64.0) / 128.0
+        return float(np.log1p(sharpness) * exposure * contrast_factor)
 
     @staticmethod
     def _read_image(path: Path) -> np.ndarray | None:

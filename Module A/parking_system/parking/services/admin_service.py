@@ -87,8 +87,6 @@ class AuthService:
         username = username.strip()
         if not 3 <= len(username) <= 50 or any(ch.isspace() for ch in username):
             raise AuthenticationError("用户名须为 3～50 个不含空格的字符")
-        if len(password) < 8:
-            raise AuthenticationError("密码至少需要 8 个字符")
         return username, password
 
     def has_accounts(self) -> bool:
@@ -202,8 +200,6 @@ class AuthService:
     def change_password(
         self, actor: UserSession, old_password: str, new_password: str
     ) -> None:
-        if len(new_password) < 8:
-            raise AuthenticationError("新密码至少需要 8 个字符")
         with self.database.transaction() as connection:
             admins = AdminRepository(connection)
             row = admins.find_by_username(actor.username)
